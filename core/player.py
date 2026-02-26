@@ -99,5 +99,9 @@ class TeamManager:
              raise ValueError(f"Team '{team_name}' does not exist.")
         return self.teams[team_name].get_score()
 
-    def notify(self):
-        return f"{self.teams[0].name} : {self.teams[1].name} = {self.teams[0].get_score()} : {self.teams[1].get_score()}"
+    def notify(self) -> str:
+        if not self.teams:
+             return "No teams registered yet."             
+        names_str  = " : ".join(team.name for team in self.teams.values())
+        scores_str = " : ".join(str(team.get_score()) for team in self.teams.values())        
+        return f"{names_str} = {scores_str}"
