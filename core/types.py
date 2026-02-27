@@ -8,7 +8,7 @@ class GameResult(Enum):
 
 
 class SessionState(Enum):
-    PENDING     = 0
     IN_PROGRESS = 1
     BREAK_TIME  = 2
     COMPLETED   = 3
+    

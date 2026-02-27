@@ -1,0 +1,3 @@
+class ClientSocket:
+    def __init__(self):
+        ...
