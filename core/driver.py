@@ -3,7 +3,7 @@ from typing import Tuple, List
 
 class Driver:
     def __init__(self):
-        self.previous_count = 0
+        self.__last_message_text = ''
 
     def open_site(self) -> None:
         ...
@@ -21,22 +21,32 @@ class Driver:
         ...
  
     def get_players_name(self) -> Tuple[str, str]:
-        ...
+        ... 
 
-    def receive_messages(self) -> List[Tuple[str, str]]:
+    def receive_messages(self) -> List[str]:
         elements: List[str] = ...
-        current_count       = len(elements)
-        if current_count == self.previous_count:
+
+        if not elements:
             return []
-        new_elements = elements[self.previous_count:]
-        self.previous_count = current_count
-        return new_elements
+
+        if elements[-1] == self.__last_message_text:
+            return []
+        
+        try:
+            reversed_idx = elements[::-1].index(self.__last_message_text)
+            self.__last_message_text = elements[-1]
+            return elements[len(elements) - reversed_idx:]
+        except ValueError:
+            self.__last_message_text = elements[-1]
+            return elements
 
     def send_message(self, message: str):
+        self.__last_message_text = message
         ...
 
     def leave_table(self):
+        self.__last_message_text = ''
         ...
 
     def quit(self):
-        ...
+        self.__last_message_text = ''

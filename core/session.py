@@ -1,5 +1,6 @@
+import uuid
 from typing                import Tuple
-from core.types            import SessionState, GameResult
+from core.types            import SessionState, GameResult, PacketType
 from core.driver           import Driver
 from commands.dispatcher   import CommandDispatcher
 from network.client_socket import ClientSocket
@@ -44,19 +45,27 @@ class MatchSession:
             self.command_dispatcher.dispatch(sender, text)
 
     def _handle_game_result(self, system_message: str):
-        result      = None
-        winner      = None
         if 'player #1 wins' in system_message:
-            result      = GameResult.WIN
-            winner      = self.p1_name
+            score_p1, score_p2 = GameResult.WIN, GameResult.LOSS
         elif 'player #2 wins' in system_message:
-            result      = GameResult.WIN
-            winner      = self.p2_name
+            score_p1, score_p2 = GameResult.LOSS, GameResult.WIN
         elif 'draw' in system_message:
-            result = GameResult.DRAW
+            score_p1, score_p2 = GameResult.DRAW, GameResult.DRAW
         else:
             return
-        # TODO: Update score
+        
+        payload = {
+            'type': PacketType.MATCH_RESULT.value,
+            'meta': {
+                'match_id': str(uuid.uuid4()),
+            },
+            'data': {
+                'players': (self.p1_name, self.p2_name),
+                'scores' : (score_p1.value, score_p2.value),
+            }
+        }
+
+        self.socket_client.send_packet(payload)
         
     def leave(self):
         self.state = SessionState.COMPLETED
