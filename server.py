@@ -1,18 +1,19 @@
 import time
 from typing                import Dict, Any
-from network.server_socket import ServerSocket
-from core.player           import TeamManager
-from core.types            import PacketType
+from network.server_socket import TcpServerSocket
+from core.player           import InMemoryTeamRepository, IScoreObserver
+from core.types            import RequestType, ResponseType
 
 
-class Server:
+class Server(IScoreObserver):
     def __init__(self, host: str, port: int):
         self.host = host
         self.port = port
-        self.__team_manager = TeamManager()
+        self.__repo = InMemoryTeamRepository()
+        self.__repo.subscribe(self)
         self.__load_backup_state()
 
-        self.__socket = ServerSocket(
+        self.__socket = TcpServerSocket(
             host=self.host,
             port=self.port,
             on_receive_callback=self._handle_client_message
@@ -34,15 +35,21 @@ class Server:
         except KeyboardInterrupt:
             self.stop()
 
+    def on_score_updated(self, snapshot: str) -> None:
+        self.__socket.broadcast({
+            'type': ResponseType.BROADCAST.value,
+            'text': snapshot
+        })
+
     def _handle_client_message(self, client_addr, packet: Dict[str, Any]):
         packet_type = packet.get('type')
-        if packet_type == PacketType.MATCH_RESULT.value:
+        if packet_type == RequestType.MATCH_RESULT.value:
             data = packet.get('data')
             ...
-        elif packet_type == PacketType.SCORE_REQUEST.value:
-            board_text = self.__team_manager.notify()
+        elif packet_type == RequestType.SCORE_QUERY.value:
+            board_text = self.__repo.snapshot()
             self.__socket.send_packet(client_addr, {
-                'type': PacketType.SCORE_RESPONSE.value,
+                'type': ResponseType.SCORE_DATA.value,
                 'text': board_text
             })
         ...
@@ -52,6 +59,3 @@ class Server:
 
     def __backup_state(self):
         ...
-
-
-    

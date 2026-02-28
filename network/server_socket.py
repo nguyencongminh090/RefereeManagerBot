@@ -1,10 +1,25 @@
 import socket
 import threading
-from typing import Callable, Dict, Any, Tuple, Optional
+from abc              import ABC, abstractmethod
+from typing           import Callable, Dict, Any, Tuple, Optional
 from network.protocol import PacketProtocol
 
 
-class ServerSocket:
+class IServerSocket(ABC):
+    @abstractmethod
+    def start_listening(self) -> None: ...
+
+    @abstractmethod
+    def stop(self) -> None: ...
+
+    @abstractmethod
+    def send_packet(self, client_addr: Tuple[str, int], payload: Dict[str, Any]) -> None: ...
+
+    @abstractmethod
+    def broadcast(self, payload: Dict[str, Any]) -> None: ...
+
+
+class TcpServerSocket(IServerSocket):
     def __init__(self,
                  host:str,
                  port:int,

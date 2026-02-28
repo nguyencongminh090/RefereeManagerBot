@@ -6,13 +6,13 @@ from dataclasses import dataclass
 class CommandContext:
     sender: str
     args  : List[str]
-    driver: 'Driver'
-    socket: 'ClientSocket'
+    driver: 'IDriver'
+    socket: 'IClientSocket'
 
 class CommandDispatcher:
-    def __init__(self, driver: 'Driver', socket: 'ClientSocket'):   
-        self.driver          : 'Driver'                                    = driver
-        self.socket          : 'ClientSocket'                              = socket
+    def __init__(self, driver: 'IDriver', socket: 'IClientSocket'):   
+        self.driver          : 'IDriver'                                   = driver
+        self.socket          : 'IClientSocket'                             = socket
         self.commands        : Dict[str, Callable[[CommandContext], None]] = {}
 
     def register(self, command: str, handler: Callable[[CommandContext], None]):

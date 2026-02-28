@@ -1,25 +1,41 @@
-from dataclasses import dataclass, field
-from core.types  import GameResult
-from typing      import Tuple
+from abc            import ABC, abstractmethod
+from dataclasses    import dataclass, field
+from typing         import Dict, List, Optional, Set
+from core.types     import GameResult, PlayerStats
+
+
+class IScoreObserver(ABC):
+    @abstractmethod
+    def on_score_updated(self, snapshot: str) -> None: ...
+
+
+class IScoreSubject(ABC):
+    @abstractmethod
+    def subscribe(self, observer: IScoreObserver) -> None: ...
+
+    @abstractmethod
+    def unsubscribe(self, observer: IScoreObserver) -> None: ...
+
+    @abstractmethod
+    def notify_all(self) -> None: ...
 
 
 @dataclass
 class Player:
-    name : str
-    win  : int = field(init=False, default=0, repr=False)
-    loss : int = field(init=False, default=0, repr=False)
-    draw : int = field(init=False, default=0, repr=False)
+    name  : str
+    _stats: PlayerStats = field(init=False, default_factory=PlayerStats)
 
-    def update_score(self, score: GameResult):
-        if score == GameResult.WIN:
-            self.win += 1
-        elif score == GameResult.LOSS:
-            self.loss += 1
-        elif score == GameResult.DRAW:
-            self.draw += 1
+    def update_score(self, result: GameResult) -> None:
+        if result == GameResult.WIN:
+            self._stats.wins += 1
+        elif result == GameResult.LOSS:
+            self._stats.losses += 1
+        elif result == GameResult.DRAW:
+            self._stats.draws += 1
 
-    def get_score(self) -> Tuple[int, int, int]:
-        return self.win, self.loss, self.draw
+    @property
+    def stats(self) -> PlayerStats:
+        return self._stats
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Player):
@@ -29,79 +45,120 @@ class Player:
     def __hash__(self) -> int:
         return hash(self.name)
 
-    def __str__(self):
-        return f"{self.name}: {self.win}-{self.loss}-{self.draw}"
+    def __str__(self) -> str:
+        return f"{self.name}: {self._stats}"
 
 
 @dataclass
 class Team:
-    name     : str
-    players  : dict[str, Player] = field(default_factory=dict)
+    name    : str
+    _players: Dict[str, Player] = field(default_factory=dict)
 
-    def add_player(self, player: Player):
-        if player.name in self.players:
+    def add_player(self, player: Player) -> None:
+        if player.name in self._players:
             raise ValueError(f"{player.name} is already in the team")
-        self.players[player.name] = player
+        self._players[player.name] = player
 
-    def get_score(self) -> int:
-        return sum(player.get_score()[0] for player in self.players.values())
+    def get_player(self, name: str) -> Optional[Player]:
+        return self._players.get(name)
 
-    def get_players_result(self, name: str) -> Tuple[int, int, int]:
-        if name not in self.players:
+    def total_score(self) -> float:
+        return sum(p.stats.total_score() for p in self._players.values())
+
+    def player_stats(self, name: str) -> PlayerStats:
+        if name not in self._players:
             raise ValueError(f"{name} is not in the team")
-        return self.players[name].get_score()
+        return self._players[name].stats
 
-    def update_players_score(self, player_name: str, score: GameResult):
-        if player_name not in self.players:
-            raise ValueError(f"{player_name} is not in the team")
-        self.players[player_name].update_score(score)
+    def update_player_score(self, name: str, result: GameResult) -> None:
+        if name not in self._players:
+            raise ValueError(f"{name} is not in the team")
+        self._players[name].update_score(result)
 
-        
-class TeamManager:
-    _instance = None
+    def all_players(self) -> List[Player]:
+        return list(self._players.values())
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance                 : TeamManager     = super(TeamManager, cls).__new__(cls)
-            cls._instance.teams           : dict[str, Team] = {}
-            cls._instance._player_team_map: dict[str, Team]  = {}
-        return cls._instance
 
-    def register_team(self, team_name: str) -> None:
-        if team_name in self.teams:
-            raise ValueError(f"Team '{team_name}' is already registered.")
-        self.teams[team_name] = Team(team_name)
+class ITeamRepository(ABC):
+    @abstractmethod
+    def register_team(self, name: str) -> None: ...
+
+    @abstractmethod
+    def join_team(self, player_name: str, team_name: str) -> None: ...
+
+    @abstractmethod
+    def record_result(self, player_name: str, result: GameResult) -> None: ...
+
+    @abstractmethod
+    def record_match(self, p1_name: str, p1_result: GameResult, p2_name: str, p2_result: GameResult) -> None: ...
+
+    @abstractmethod
+    def player_stats(self, player_name: str) -> PlayerStats: ...
+
+    @abstractmethod
+    def team_score(self, team_name: str) -> float: ...
+
+    @abstractmethod
+    def snapshot(self) -> str: ...
+
+
+class InMemoryTeamRepository(ITeamRepository, IScoreSubject):
+    def __init__(self):
+        self._teams          : Dict[str, Team]           = {}
+        self._player_team_map: Dict[str, Team]           = {}
+        self._observers      : Set[IScoreObserver]       = set()
+
+    def subscribe(self, observer: IScoreObserver) -> None:
+        self._observers.add(observer)
+
+    def unsubscribe(self, observer: IScoreObserver) -> None:
+        self._observers.discard(observer)
+
+    def notify_all(self) -> None:
+        text = self.snapshot()
+        for observer in self._observers:
+            observer.on_score_updated(text)
+
+    def register_team(self, name: str) -> None:
+        if name in self._teams:
+            raise ValueError(f"Team '{name}' is already registered.")
+        self._teams[name] = Team(name)
 
     def join_team(self, player_name: str, team_name: str) -> None:
-        if team_name not in self.teams:
+        if team_name not in self._teams:
             raise ValueError(f"Team '{team_name}' does not exist.")
         if player_name in self._player_team_map:
             raise ValueError(f"Player '{player_name}' is already in Team '{self._player_team_map[player_name].name}'.")
 
         new_player = Player(player_name)
-        self.teams[team_name].add_player(new_player)
-        self._player_team_map[player_name] = self.teams[team_name]
+        self._teams[team_name].add_player(new_player)
+        self._player_team_map[player_name] = self._teams[team_name]
 
-    def record_match_result(self, player_name: str, result: GameResult) -> None:
+    def record_result(self, player_name: str, result: GameResult) -> None:
         team = self._player_team_map.get(player_name)
         if not team:
             raise ValueError(f"Cannot record result: Player '{player_name}' is not in any team.")
-        team.update_players_score(player_name, result)
+        team.update_player_score(player_name, result)
 
-    def get_player_stats(self, player_name: str) -> Tuple[int, int, int]:
+    def record_match(self, p1_name: str, p1_result: GameResult, p2_name: str, p2_result: GameResult) -> None:
+        self.record_result(p1_name, p1_result)
+        self.record_result(p2_name, p2_result)
+        self.notify_all()
+
+    def player_stats(self, player_name: str) -> PlayerStats:
         team = self._player_team_map.get(player_name)
         if not team:
-             raise ValueError(f"Cannot retrieve stats: Player '{player_name}' not found.")
-        return team.get_players_result(player_name)
+            raise ValueError(f"Cannot retrieve stats: Player '{player_name}' not found.")
+        return team.player_stats(player_name)
 
-    def get_team_total_score(self, team_name: str) -> int:
-        if team_name not in self.teams:
-             raise ValueError(f"Team '{team_name}' does not exist.")
-        return self.teams[team_name].get_score()
+    def team_score(self, team_name: str) -> float:
+        if team_name not in self._teams:
+            raise ValueError(f"Team '{team_name}' does not exist.")
+        return self._teams[team_name].total_score()
 
-    def notify(self) -> str:
-        if not self.teams:
-             return "No teams registered yet."             
-        names_str  = " : ".join(team.name for team in self.teams.values())
-        scores_str = " : ".join(str(team.get_score()) for team in self.teams.values())        
+    def snapshot(self) -> str:
+        if not self._teams:
+            return "No teams registered yet."
+        names_str  = " : ".join(team.name for team in self._teams.values())
+        scores_str = " : ".join(str(team.total_score()) for team in self._teams.values())
         return f"{names_str} = {scores_str}"
