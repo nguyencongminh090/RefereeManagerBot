@@ -1,0 +1,61 @@
+import time
+from typing                import Dict, Any, Optional
+from commands.dispatcher   import CommandDispatcher
+from network.client_socket import ClientSocket
+from core.driver           import Driver
+from core.session          import MatchSession
+
+class Client:
+    def __init__(self, host: str, port: int):
+
+        self.__dispatcher = CommandDispatcher()        
+        self.__driver     = Driver()
+        self.__socket     = ClientSocket(
+            host                = host, 
+            port                = port, 
+            on_receive_callback = self._handle_server_message
+        )
+        self.__session: Optional[MatchSession] = None
+        self._setup_commands()
+
+    def _handle_server_message(self, packet: Dict[str, Any]):
+        ...
+
+    def _setup_commands(self):
+        ...
+    
+    def start(self):
+        self.__socket.connect()
+        self.__driver.open_site()
+        self.__driver.login(...)
+        self.__driver.goto_lobby()
+
+        self._run_main_loop()
+
+    def stop(self):
+        self.__socket.disconnect()
+        self.__driver.quit()
+
+    def _run_main_loop(self):
+        try:
+            while True:
+                if self.__session is None:
+                    inviter = self.__driver.check_for_invitation()
+                    if inviter:
+                        self.__driver.accept_invitation()
+                        self.__session = MatchSession(
+                            self.__driver,
+                            self.__dispatcher,
+                            self.__socket
+                        )
+                        # TODO: refine start_session method
+                        # self.__session.start_session()
+                else:
+                    new_messages = self.__driver.receive_messages()
+                    for sender, text in new_messages:
+                        self.__session.process_chat_event(sender, text)
+                    if self.__session.state.value == 3:
+                        self.__session = None
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            self.stop()

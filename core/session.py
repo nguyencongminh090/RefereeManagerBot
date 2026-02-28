@@ -29,7 +29,7 @@ class MatchSession:
             return
         return p1_name, p2_name
 
-    def start_session(self):
+    def initialize_players(self):
         p1_name, p2_name = self.get_players_name()
         if not p1_name or not p2_name:
             return
