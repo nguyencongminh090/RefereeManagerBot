@@ -25,7 +25,7 @@ class PacketProtocol:
         if not raw_msglen:
             return None
             
-        msglen = struct.unpack('>I', raw_msglen)[0]
+        msglen   = struct.unpack('>I', raw_msglen)[0]
         raw_data = PacketProtocol.recv_exact(sock, msglen)
         if not raw_data:
             return None

@@ -41,8 +41,14 @@ class MatchSession:
             return
         if sender == '+':
             self._handle_game_result(text)  
-        elif text.startswith('/'): 
-            self.command_dispatcher.dispatch(sender, text)
+        elif text.startswith('!'): 
+            match text:
+                case '!start':
+                    self.initialize_players()
+                case '!leave':
+                    self.leave()
+                case _:
+                    self.command_dispatcher.dispatch(sender, text)
 
     def _handle_game_result(self, system_message: str):
         if 'player #1 wins' in system_message:

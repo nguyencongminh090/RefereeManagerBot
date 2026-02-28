@@ -1,15 +1,37 @@
-from typing import Callable
+from typing import Callable, List, Dict, Optional
+from dataclasses import dataclass
 
+
+@dataclass
+class CommandContext:
+    sender: str
+    args  : List[str]
+    driver: 'Driver'
+    socket: 'ClientSocket'
 
 class CommandDispatcher:
-    def __init__(self):
-        self.commands: dict[str, Callable] = {}
+    def __init__(self, driver: 'Driver', socket: 'ClientSocket'):   
+        self.driver          : 'Driver'                                    = driver
+        self.socket          : 'ClientSocket'                              = socket
+        self.commands        : Dict[str, Callable[[CommandContext], None]] = {}
 
-    def register(self, command: str, handler: Callable):
+    def register(self, command: str, handler: Callable[[CommandContext], None]):
         self.commands[command] = handler
 
-    def dispatch(self, command: str):
-        if command in self.commands:
-            self.commands[command]()
+    def dispatch(self, sender: str, full_text: str):
+        parts    = full_text.split()
+        cmd_name = parts[0].lower()
+        args     = parts[1:]
+        if cmd_name in self.commands:
+            ctx = CommandContext(
+                sender = sender,
+                args   = args,
+                driver = self.driver,
+                socket = self.socket
+            )
+            try:
+                self.commands[cmd_name](ctx)
+            except Exception:
+                pass
         else:
-            print(f"Command {command} not found")   
+            pass

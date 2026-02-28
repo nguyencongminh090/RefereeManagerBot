@@ -80,7 +80,7 @@ class TeamManager:
 
         new_player = Player(player_name)
         self.teams[team_name].add_player(new_player)
-        self._player_team_map[player_name] = self.teams[team_name]  
+        self._player_team_map[player_name] = self.teams[team_name]
 
     def record_match_result(self, player_name: str, result: GameResult) -> None:
         team = self._player_team_map.get(player_name)

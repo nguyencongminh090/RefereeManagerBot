@@ -14,12 +14,12 @@ class SessionState(Enum):
     
 
 class PacketType(Enum):
-    AUTH_REQUEST    = 1       
-    MATCH_RESULT    = 2       
-    SCORE_REQUEST   = 3      
-    HEARTBEAT       = 4          
+    AUTH_REQUEST    = 1
+    MATCH_RESULT    = 2
+    SCORE_REQUEST   = 3
+    HEARTBEAT       = 4
     
-    AUTH_RESPONSE   = 101    
-    SCORE_RESPONSE  = 102   
-    ERROR_RESPONSE  = 103   
-    BROADCAST_MSG   = 104    
+    AUTH_RESPONSE   = 101
+    SCORE_RESPONSE  = 102
+    ERROR_RESPONSE  = 103
+    BROADCAST_MSG   = 104
