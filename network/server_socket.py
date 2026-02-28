@@ -1,8 +1,12 @@
 import socket
+import logging
 import threading
 from abc              import ABC, abstractmethod
 from typing           import Callable, Dict, Any, Tuple, Optional
 from network.protocol import PacketProtocol
+
+
+logger = logging.getLogger(__name__)
 
 
 class IServerSocket(ABC):
@@ -49,7 +53,8 @@ class TcpServerSocket(IServerSocket):
         while self.__running:
             try:
                 client_sock, client_addr = self.__server_sock.accept()
-                
+                logger.info("Client connected: %s", client_addr)
+
                 with self.__clients_lock:
                     self.__clients[client_addr] = client_sock
 
@@ -74,8 +79,10 @@ class TcpServerSocket(IServerSocket):
                 self.__on_receive_callback(client_addr, packet)
                 
             except Exception as e:
+                logger.warning("Client %s error: %s", client_addr, e)
                 break
                 
+        logger.info("Client disconnected: %s", client_addr)
         self._remove_client(client_addr, client_sock)
 
 
@@ -87,18 +94,24 @@ class TcpServerSocket(IServerSocket):
              data_bytes = PacketProtocol.encode(payload)
              try:
                  client_sock.sendall(data_bytes)
-             except:
+             except Exception as e:
+                 logger.warning("Failed to send to %s: %s", client_addr, e)
                  self._remove_client(client_addr, client_sock)
 
     def broadcast(self, payload: Dict[str, Any]):
         data_bytes = PacketProtocol.encode(payload)
-        
+        failed = []
+
         with self.__clients_lock:
             for addr, sock in list(self.__clients.items()):
                 try:
                     sock.sendall(data_bytes)
-                except:
-                    self._remove_client(addr, sock)
+                except Exception as e:
+                    logger.warning("Broadcast failed to %s: %s", addr, e)
+                    failed.append((addr, sock))
+
+        for addr, sock in failed:
+            self._remove_client(addr, sock)
 
     def _remove_client(self, addr, sock):
         with self.__clients_lock:
@@ -106,7 +119,7 @@ class TcpServerSocket(IServerSocket):
                  del self.__clients[addr]
         try:
              sock.close()
-        except: 
+        except Exception:
             pass
         
     def stop(self): 

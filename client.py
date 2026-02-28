@@ -1,4 +1,5 @@
 import time
+import queue
 from typing                import Dict, Any, Optional
 from commands.dispatcher   import CommandDispatcher
 from network.client_socket import TcpClientSocket
@@ -16,17 +17,26 @@ class Client:
             port                = port, 
             on_receive_callback = self._handle_server_message
         )
-        self.__dispatcher = CommandDispatcher(self.__driver, self.__socket)
-        self.__session: Optional[MatchSession] = None
+        self.__dispatcher: CommandDispatcher           = CommandDispatcher(self.__driver, self.__socket)
+        self.__session   : Optional[MatchSession]      = None
+        self.__msg_queue : queue.Queue[Dict[str, Any]] = queue.Queue()
         self._setup_commands()
 
     def _handle_server_message(self, packet: Dict[str, Any]):
-        packet_type = packet.get("type")
-        
-        if packet_type == ResponseType.SCORE_DATA.value:
-            self.__driver.send_message(f"{packet.get('text', '')}")
-        elif packet_type == ResponseType.BROADCAST.value:
-            self.__driver.send_message(f"{packet.get('text')}")
+        self.__msg_queue.put(packet)
+
+    def _process_server_messages(self):
+        while not self.__msg_queue.empty():
+            try:
+                packet      = self.__msg_queue.get_nowait()
+                packet_type = packet.get("type")
+
+                if packet_type == ResponseType.SCORE_DATA.value:
+                    self.__driver.send_message(f"{packet.get('text', '')}")
+                elif packet_type == ResponseType.BROADCAST.value:
+                    self.__driver.send_message(f"{packet.get('text')}")
+            except queue.Empty:
+                break
 
     def _setup_commands(self):
         ...
@@ -46,6 +56,8 @@ class Client:
     def _run_main_loop(self):
         try:
             while True:
+                self._process_server_messages()
+
                 if self.__session is None:
                     inviter = self.__driver.check_for_invitation()
                     if inviter:

@@ -74,7 +74,12 @@ class MatchSession:
         }
 
         self._socket.send_packet(payload)
+        self._context.current_match += 1
+
+        if self._context.current_match > self._context.total_matches:
+            self.leave()
         
     def leave(self) -> None:
         self._context.state = SessionState.COMPLETED
         self._driver.send_message("bye")
+        self._driver.leave_table()

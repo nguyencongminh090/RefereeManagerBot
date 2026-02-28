@@ -1,5 +1,9 @@
+import logging
 from typing import Callable, List, Dict, Optional
 from dataclasses import dataclass
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -31,7 +35,7 @@ class CommandDispatcher:
             )
             try:
                 self.commands[cmd_name](ctx)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("Command '%s' failed: %s", cmd_name, e, exc_info=True)
         else:
-            pass
+            logger.warning("Unknown command: '%s'", cmd_name)

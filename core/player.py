@@ -1,3 +1,4 @@
+import threading
 from abc            import ABC, abstractmethod
 from dataclasses    import dataclass, field
 from typing         import Dict, List, Optional, Set
@@ -104,61 +105,73 @@ class ITeamRepository(ABC):
 
 class InMemoryTeamRepository(ITeamRepository, IScoreSubject):
     def __init__(self):
+        self._lock           : threading.RLock           = threading.RLock()
         self._teams          : Dict[str, Team]           = {}
         self._player_team_map: Dict[str, Team]           = {}
         self._observers      : Set[IScoreObserver]       = set()
 
     def subscribe(self, observer: IScoreObserver) -> None:
-        self._observers.add(observer)
+        with self._lock:
+            self._observers.add(observer)
 
     def unsubscribe(self, observer: IScoreObserver) -> None:
-        self._observers.discard(observer)
+        with self._lock:
+            self._observers.discard(observer)
 
     def notify_all(self) -> None:
-        text = self.snapshot()
-        for observer in self._observers:
+        with self._lock:
+            text = self.snapshot()
+            observers_copy = list(self._observers)
+        for observer in observers_copy:
             observer.on_score_updated(text)
 
     def register_team(self, name: str) -> None:
-        if name in self._teams:
-            raise ValueError(f"Team '{name}' is already registered.")
-        self._teams[name] = Team(name)
+        with self._lock:
+            if name in self._teams:
+                raise ValueError(f"Team '{name}' is already registered.")
+            self._teams[name] = Team(name)
 
     def join_team(self, player_name: str, team_name: str) -> None:
-        if team_name not in self._teams:
-            raise ValueError(f"Team '{team_name}' does not exist.")
-        if player_name in self._player_team_map:
-            raise ValueError(f"Player '{player_name}' is already in Team '{self._player_team_map[player_name].name}'.")
+        with self._lock:
+            if team_name not in self._teams:
+                raise ValueError(f"Team '{team_name}' does not exist.")
+            if player_name in self._player_team_map:
+                raise ValueError(f"Player '{player_name}' is already in Team '{self._player_team_map[player_name].name}'.")
 
-        new_player = Player(player_name)
-        self._teams[team_name].add_player(new_player)
-        self._player_team_map[player_name] = self._teams[team_name]
+            new_player = Player(player_name)
+            self._teams[team_name].add_player(new_player)
+            self._player_team_map[player_name] = self._teams[team_name]
 
     def record_result(self, player_name: str, result: GameResult) -> None:
-        team = self._player_team_map.get(player_name)
-        if not team:
-            raise ValueError(f"Cannot record result: Player '{player_name}' is not in any team.")
-        team.update_player_score(player_name, result)
+        with self._lock:
+            team = self._player_team_map.get(player_name)
+            if not team:
+                raise ValueError(f"Cannot record result: Player '{player_name}' is not in any team.")
+            team.update_player_score(player_name, result)
 
     def record_match(self, p1_name: str, p1_result: GameResult, p2_name: str, p2_result: GameResult) -> None:
-        self.record_result(p1_name, p1_result)
-        self.record_result(p2_name, p2_result)
+        with self._lock:
+            self.record_result(p1_name, p1_result)
+            self.record_result(p2_name, p2_result)
         self.notify_all()
 
     def player_stats(self, player_name: str) -> PlayerStats:
-        team = self._player_team_map.get(player_name)
-        if not team:
-            raise ValueError(f"Cannot retrieve stats: Player '{player_name}' not found.")
-        return team.player_stats(player_name)
+        with self._lock:
+            team = self._player_team_map.get(player_name)
+            if not team:
+                raise ValueError(f"Cannot retrieve stats: Player '{player_name}' not found.")
+            return team.player_stats(player_name)
 
     def team_score(self, team_name: str) -> float:
-        if team_name not in self._teams:
-            raise ValueError(f"Team '{team_name}' does not exist.")
-        return self._teams[team_name].total_score()
+        with self._lock:
+            if team_name not in self._teams:
+                raise ValueError(f"Team '{team_name}' does not exist.")
+            return self._teams[team_name].total_score()
 
     def snapshot(self) -> str:
-        if not self._teams:
-            return "No teams registered yet."
-        names_str  = " : ".join(team.name for team in self._teams.values())
-        scores_str = " : ".join(str(team.total_score()) for team in self._teams.values())
-        return f"{names_str} = {scores_str}"
+        with self._lock:
+            if not self._teams:
+                return "No teams registered yet."
+            names_str  = " : ".join(team.name for team in self._teams.values())
+            scores_str = " : ".join(str(team.total_score()) for team in self._teams.values())
+            return f"{names_str} = {scores_str}"
