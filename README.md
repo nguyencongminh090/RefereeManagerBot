@@ -35,7 +35,7 @@ referee bot ...                              --TCP-->
 
 The prefix is `[commands] prefix` (default `!`). Commands listed in `[commands] admin_only` work only for the
 nicknames in `[tournament] admins` (several are allowed, case is ignored); everyone else is ignored silently.
-Admin-only: `leave`, `rules`, `set`, `break`, `start`. `start` is listed but not implemented yet.
+Admin-only: `leave`, `rules`, `set`, `break`.
 
 | Command | Who | What it does |
 |---|---|---|

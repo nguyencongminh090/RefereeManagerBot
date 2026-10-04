@@ -116,7 +116,7 @@ Server-side admin check: the packet carries `sender`; the server verifies it aga
 - `!set L-R`: parse with a regex `^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$` (halves only: value*2 must be an integer). Bad text → chat `Usage: !set 3-2`. Sends `SET_SCORE` with the *current* seat names (`get_players_name()` at the command), `sender`, and targets. Answer arrives as `SCORE_SET` or `ERROR`; session prints it with the result-line formatter (Task 5) or the error text.
 - `!break [minutes]`: session sets `BREAK_TIME`, `resume_at = now + minutes` (default `break_minutes`), sends `messages.break_text` (already has `{curr_time}`/`{resume_time}`). Bad minutes (≤ 0 or > 60) → usage message. Reuses `_start_break` extracted from `_start_break_if_due` (no duplicated code).
 - `!cheer N`: `N` in {1, 2}; name of the player in seat N now; random template from `[messages] cheers = ["Go, {name}!", ...]` (at least 5, each must contain `{name}`; validated at start-up). Randomness injected (`random.Random`) so the test is deterministic. Not admin-only; remove nothing from `admin_only` (`cheer` is simply not in the list). Cooldown: one cheer per 10 s per table to avoid chat spam (constant `CHEER_COOLDOWN_SEC`).
-- `config.toml` `[commands] admin_only` becomes `["start", "leave", "break", "set", "rules"]` unchanged; `start` stays unimplemented and is removed from the list (it is not in the user's list) — **confirm**.
+- `config.toml` `[commands] admin_only` is now `["leave", "break", "set", "rules"]`: `start` was dropped (user, 2026-10-04; `example.py` has no `!start` either).
 
 **Steps (per command):** failing test → run → minimal code → run → commit (`feat: !set command`, `feat: !break command`, `feat: !cheer command`).
 

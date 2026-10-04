@@ -71,7 +71,7 @@ player_prefix = "wbc"                  # nicknames must start with this ("" = no
 
 [commands]
 prefix     = "!"
-admin_only = ["start", "leave", "break", "set", "rules"]
+admin_only = ["leave", "break", "set", "rules"]
 cheer_cooldown_seconds = 10            # one !cheer per table in this time
 break_max_minutes = 15                 # longest break an admin may announce with !break N
 
