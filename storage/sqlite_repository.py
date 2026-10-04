@@ -3,9 +3,10 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
 
-from domain.ports import IScoreObserver, ITeamRepository, MatchRecord
+from domain.ports import IScoreObserver, ITeamRepository, MatchRecord, PairScoreChange
 from domain.types import Scoring
 from storage.models import GameRecord, RankingRules, Ref
+from storage.pair_adjust import PairTarget
 from storage.tournament_store import TournamentStore
 
 _NO_TEAMS_TEXT = "No teams registered yet."
@@ -77,6 +78,14 @@ class SqliteTeamRepository(ITeamRepository):
     def pair_score(self, game_id: int) -> Dict[str, Any]:
         """Returns the running micro-match score of the two players of a stored game."""
         return self._store.pair_score_for_game(game_id, self._scoring)
+
+    def set_pair_score(self, change: PairScoreChange) -> Dict[str, Any]:
+        """Corrects the pair's score under the requesting admin's name in the audit log."""
+        target = PairTarget(change.p1_name, change.p2_name, change.p1_points, change.p2_points)
+        store = self._store.with_actor(change.actor)
+        game_id = store.set_pair_score(self._tournament, target, self._scoring)
+        self.notify_all()
+        return store.pair_score_for_game(game_id, self._scoring)
 
     def roster(self) -> List[Dict[str, Any]]:
         """Returns every player of the tournament."""

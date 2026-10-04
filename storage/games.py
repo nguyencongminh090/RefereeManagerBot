@@ -95,6 +95,11 @@ class GameLedger:
                  "table": game.table_no}))
             return cur.lastrowid
 
+    def pair_fixture(self, cx: sqlite3.Connection, tournament_id: int,
+                     players: Tuple[sqlite3.Row, sqlite3.Row]) -> Optional[int]:
+        """Returns the fixture a new game of these two players would join, or None."""
+        return self._resolve_fixture(cx, _FixtureLookup(tournament_id, players, None))
+
     def _check_new_uid(self, cx: sqlite3.Connection, game_uid: str) -> None:
         existing = cx.execute("SELECT id FROM games WHERE game_uid = ?", (game_uid,)).fetchone()
         if existing:

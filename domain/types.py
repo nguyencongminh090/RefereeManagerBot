@@ -46,6 +46,11 @@ class Scoring:
         """Returns the points of a player with these game counts."""
         return wins * self.win + draws * self.draw + losses * self.loss
 
+    def points_for(self, result: GameResult) -> float:
+        """Returns the points one player gets for one game with this result."""
+        return {GameResult.WIN: self.win, GameResult.DRAW: self.draw,
+                GameResult.LOSS: self.loss}[result]
+
     def points_against(self, wins: int, draws: int, losses: int) -> float:
         """Points the opponents scored in the same games."""
         return self.points(losses, draws, wins)

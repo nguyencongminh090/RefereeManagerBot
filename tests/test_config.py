@@ -34,11 +34,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(12, s.tournament.total_matches)
         self.assertEqual(1.0, s.tournament.scoring.games.win)
         self.assertEqual(("score_difference", "head_to_head", "sudden_death"), s.tournament.scoring.tiebreaks)
-        self.assertTrue(s.playok.patterns["draw"].match("#draw"))
+        self.assertTrue(s.playok.patterns["draw"].match("draw"))
         self.assertEqual("dudai", s.playok.patterns["invitation"].match(
             "dudai [1093] invites you to table #104 (1m); accept?").group("user"))
         self.assertEqual("Europe/Warsaw", str(s.tournament.tzinfo))
-        self.assertEqual("Replace with the rules reminder in English.", s.messages.rules_for("xx", "en"))
+        self.assertEqual("Replace with the rules reminder in English.", s.texts.rules)
 
     def test_hardening_keys_are_typed(self):
         s = self.load()
@@ -95,11 +95,60 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(any("playok.patterns.win_p1" in p and "regular expression" in p for p in found))
         self.assertTrue(any("playok.patterns.timeout" in p and "seat" in p for p in found))
 
-    def test_messages_validation(self):
-        self.text = self.text.replace("{resume_time}", "{resume_at}").replace('en = "Replace', 'fr = "Replace')
+    def english_block(self):
+        start = self.text.index("[messages.en]")
+        return self.text[start:]
+
+    def with_language(self, name, edit=lambda block: block):
+        block = edit(self.english_block().replace("[messages.en]", f"[messages.{name}]"))
+        self.text = self.text.rstrip("\n") + "\n\n" + block
+
+    def test_command_limits_and_chat_texts_are_typed(self):
+        s = self.load()
+        self.assertEqual((10.0, 15.0), (s.commands.cheer_cooldown_seconds, s.commands.break_max_minutes))
+        self.assertGreaterEqual(len(s.texts.cheers), 3)
+        self.assertTrue(all("{name}" in c for c in s.texts.cheers))
+        self.assertIn("{max_minutes}", s.texts.break_usage)
+        self.assertEqual("alice : bob = 3-2", s.texts.result_pair.format(p1="alice", p2="bob", s1="3", s2="2"))
+
+    def test_every_language_has_its_own_texts_and_aliases_name_them(self):
+        self.with_language("hu", lambda b: b.replace("Replace with the rules reminder in English.", "Szabalyok."))
+        self.text = self.text.replace('eng = "en"', 'eng = "en"\nhun = "hu"')
+        s = self.load()
+        self.assertEqual(("en", "hu"), s.messages.language_names())
+        self.assertEqual("Szabalyok.", s.messages.texts("hu").rules)
+        self.assertEqual("en", s.messages.resolve(" ENG "))
+        self.assertEqual("hu", s.messages.resolve("hun"))
+        self.assertEqual("hu", s.messages.resolve("HU"))
+        self.assertIsNone(s.messages.resolve("klingon"))
+        self.assertEqual(s.messages.texts("en"), s.texts)             # the tournament language is en
+
+    def test_a_language_with_a_missing_key_stops_start_up(self):
+        self.with_language("hu", lambda b: b.replace('bye              = "bye"\n', ""))
+        self.assertTrue(any("messages.hu.bye" in p for p in self.problems()))
+
+    def test_placeholders_are_checked_in_every_language(self):
+        self.with_language("hu", lambda b: b.replace("{reason}", "{why}").replace("Go, {name}!", "Go!"))
         found = self.problems()
-        self.assertTrue(any("messages.break_text" in p for p in found))
-        self.assertTrue(any("no text for the tournament language" in p for p in found))
+        self.assertTrue(any("messages.hu.set_failed" in p for p in found), found)
+        self.assertTrue(any("messages.hu.cheers" in p for p in found), found)
+
+    def test_the_tournament_language_needs_a_table_and_aliases_need_a_target(self):
+        self.text = self.text.replace('language        = "en"', 'language = "fr"').replace('eng = "en"', 'eng = "en"\nxx = "zz"')
+        found = self.problems()
+        self.assertTrue(any("tournament.language" in p and "fr" in p for p in found), found)
+        self.assertTrue(any("messages.aliases.xx" in p for p in found), found)
+
+    def test_broken_placeholder_in_a_text(self):
+        self.text = self.text.replace("{resume_time}", "{resume_at}")
+        self.assertTrue(any("messages.en.break_text" in p for p in self.problems()))
+
+    def test_command_limits_are_validated(self):
+        self.text = (self.text.replace("cheer_cooldown_seconds = 10", "cheer_cooldown_seconds = -1")
+                              .replace("break_max_minutes = 15", "break_max_minutes = 0"))
+        found = self.problems()
+        for key in ("cheer_cooldown_seconds", "break_max_minutes"):
+            self.assertTrue(any(f"commands.{key}" in p for p in found), (key, found))
 
     def test_timezone_and_break_rules(self):
         self.text = self.text.replace('"Europe/Warsaw"', '"Mars/Olympus"').replace("break_after     = 0", "break_after = 10").replace("break_minutes   = 5", "break_minutes = 0")

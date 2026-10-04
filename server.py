@@ -11,14 +11,15 @@ from datetime import datetime, timezone
 from typing   import Any, Callable, Dict, List, Optional, Tuple
 
 from config.settings       import ConfigError, ConfigLoader, ServerConfig, Settings
-from domain.ports           import IScoreObserver, ITeamRepository, MatchRecord
+from domain.ports           import IScoreObserver, ITeamRepository, MatchRecord, PairScoreChange
 from domain.types          import Scoring
 from network.messages      import RequestType, ResponseType
 from network.options       import ServerSocketOptions
 from network.server_socket import TcpServerSocket
 from serverapp.backup      import BackupSchedule, DatabaseBackup
 from serverapp.claims      import ClaimRegistry
-from serverapp.match_request import MatchResultRequest, match_id_of, parse_match_result
+from serverapp.match_request import (MatchResultRequest, SetScoreRequest, match_id_of,
+                                     parse_match_result, parse_set_score)
 from serverapp.router      import PacketRouter
 from serverapp.sessions    import AuthLockout, SessionRegistry
 from storage               import Database, RepositoryOptions, SqliteTeamRepository, TournamentStore
@@ -39,6 +40,7 @@ _ERROR_CODES = ((UnknownPlayerError, "UNKNOWN_PLAYER"), (PlayerInactiveError, "P
 _MISSED_HEARTBEATS    = 3
 _MAX_SWEEP_TICK_SEC   = 1.0
 _NO_TABLE_LABEL       = "-"
+_SET_SCORE            = RequestType.SET_SCORE.value   # marks errors that answer a !set
 _SERVER_ACTOR         = "server"   # audit-log name for changes the server makes itself
 
 
@@ -119,6 +121,7 @@ class Server(IScoreObserver):
         return {
             RequestType.MATCH_RESULT.value  : self._on_match_result,
             RequestType.SCORE_QUERY.value   : self._on_score_query,
+            RequestType.SET_SCORE.value     : self._on_set_score,
             RequestType.ROSTER_QUERY.value  : self._on_roster_query,
             RequestType.TABLE_CLAIM.value   : self._on_table_claim,
             RequestType.TABLE_RELEASE.value : self._on_table_release,
@@ -300,6 +303,30 @@ class Server(IScoreObserver):
             return self._error(addr, code, str(exc), match_id=request.match_id)
         self._reply(addr, ResponseType.MATCH_ACK, match_id=request.match_id, duplicate=duplicate,
                     **self._repo.pair_score(game_id))
+
+    def _on_set_score(self, addr: Addr, packet: Dict[str, Any]) -> None:
+        try:
+            request = parse_set_score(packet)
+        except ValueError as exc:
+            logger.info("set-score request rejected (BAD_PACKET): %s", exc)
+            return self._error(addr, "BAD_PACKET", str(exc), request=_SET_SCORE)
+        if not self.settings.tournament.is_admin(request.sender):
+            logger.warning("set-score request from '%s' refused: not an admin", request.sender)
+            return self._error(addr, "NOT_ADMIN", f"'{request.sender}' is not a tournament admin",
+                               request=_SET_SCORE)
+        self._apply_set_score(addr, request)
+
+    def _apply_set_score(self, addr: Addr, request: SetScoreRequest) -> None:
+        change = PairScoreChange(*request.players, *request.points, actor=request.sender)
+        try:
+            score = self._repo.set_pair_score(change)
+        except StorageError as exc:
+            code = next((c for cls, c in _ERROR_CODES if isinstance(exc, cls)), "REJECTED")
+            logger.info("set-score by '%s' rejected (%s): %s", request.sender, code, exc)
+            return self._error(addr, code, str(exc), request=_SET_SCORE)
+        logger.info("score of %s and %s set to %s by '%s'", *request.players, request.points,
+                    request.sender)
+        self._reply(addr, ResponseType.SCORE_SET, **score)
 
     def _on_score_query(self, addr: Addr, packet: Dict[str, Any]) -> None:
         self._socket.send_packet(

@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from storage.database import Database
 from storage.errors import NotFoundError
 from storage.lookups import entrant_row, participant_row, tournament_row
-from domain.types import Scoring
+from domain.types import GameResult, Scoring
 from storage.models import EntrantPair, RankingRules, Ref, StandingRow
 from storage.ranking import (GameLine, RankInput, encounters_from_games, points_by_entrant,
                              rank_entrants)
@@ -127,11 +127,39 @@ class StandingsQuery:
                 (g["p1_id"], g["p1_id"], g["fixture_id"], g["tournament_id"],
                  g["p1_id"], g["p2_id"], g["p2_id"], g["p1_id"])).fetchone()
             limit = t["games_per_pair"]
+            teams, team_points = self._team_match_score(cx, g, scoring)
             return {"games": row["games"], "limit": limit,
                     "players": [nick[g["p1_id"]], nick[g["p2_id"]]],
                     "points": [scoring.points(row["wins1"], row["draws"], row["wins2"]),
                                scoring.points(row["wins2"], row["draws"], row["wins1"])],
+                    "teams": teams, "team_points": team_points,
                     "complete": bool(limit) and row["games"] >= limit}
+
+    @staticmethod
+    def _team_match_score(cx: sqlite3.Connection, game: sqlite3.Row,
+                          scoring: Scoring) -> Tuple[List[str], List[float]]:
+        """Names and game points of the two entrants of a game over their whole fixture.
+
+        Counts the non-voided games of the fixture between the two entrants, whoever played them;
+        in an individual tournament the entrants are the players, so this is the pair score.
+        """
+        first, second = (cx.execute(
+            "SELECT p.entrant_id AS id, e.name FROM participants p"
+            " JOIN entrants e ON e.id = p.entrant_id WHERE p.id = ?", (pid,)).fetchone()
+            for pid in (game["p1_id"], game["p2_id"]))
+        rows = cx.execute(
+            "SELECT pa.entrant_id AS e1, g.p1_result AS r1, g.p2_result AS r2 FROM games g"
+            " JOIN participants pa ON pa.id = g.p1_id JOIN participants pb ON pb.id = g.p2_id"
+            " WHERE g.voided = 0 AND g.fixture_id IS ? AND g.tournament_id = ?"
+            " AND pa.entrant_id IN (?, ?) AND pb.entrant_id IN (?, ?)",
+            (game["fixture_id"], game["tournament_id"], first["id"], second["id"],
+             first["id"], second["id"])).fetchall()
+        points = {first["id"]: 0.0, second["id"]: 0.0}
+        for r in rows:
+            other = second["id"] if r["e1"] == first["id"] else first["id"]
+            points[r["e1"]] += scoring.points_for(GameResult(r["r1"]))
+            points[other] += scoring.points_for(GameResult(r["r2"]))
+        return [first["name"], second["name"]], [points[first["id"]], points[second["id"]]]
 
     def player_record(self, tournament: Ref, nickname: str) -> Dict[str, int]:
         """Returns the wins, draws and losses of one player.

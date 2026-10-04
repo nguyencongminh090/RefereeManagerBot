@@ -32,6 +32,10 @@ join_mode             = "auto"
 lobby_scan_seconds    = 2
 # unconfirmed results survive a restart here; "" keeps them in memory only
 outbox_path = "data/outbox.jsonl"
+# finished games kept while the player names cannot be read; further ones are dropped
+max_pending_results = 5
+# polls with unsent games before the log escalates to ERROR on every poll
+unreadable_polls_before_alert = 10
 
 [tournament]
 name            = "Demo Tournament"
@@ -68,10 +72,12 @@ player_prefix = "wbc"                  # nicknames must start with this ("" = no
 [commands]
 prefix     = "!"
 admin_only = ["start", "leave", "break", "set", "rules"]
+cheer_cooldown_seconds = 10            # one !cheer per table in this time
+break_max_minutes = 15                 # longest break an admin may announce with !break N
 
 [playok]
 site_url   = "https://www.playok.com/en/gomoku/"
-lobby_room = 3
+lobby_room = 3   # option 3 of the room dropdown = "Dobrocin", where the matches are played
 
 [playok.selectors]
 chat_messages     = "div.bsbb.tsbinner div.tind"
@@ -103,7 +109,7 @@ room_option       = "select.selcsl > option:nth-child({room})"   # {room} = play
 [playok.patterns]
 win_p1     = '^player #1 wins$'
 win_p2     = '^player #2 wins$'
-draw       = '^#draw'
+draw       = '^draw$'
 timeout    = '^#(?P<seat>[12]) exceeded time for game$'
 join       = '^(?P<name>\S+) \[(?P<rating>\d+)\] joins$'
 leave      = '^(?P<name>\S+) leaves$'
@@ -111,8 +117,33 @@ table_header = '^table #(?P<table>\d+)\s+(?P<time>\d+m(?:\+\d+s)?)(?:,\s*(?P<fla
 invitation = '^(?P<user>\S+) \[(?P<elo>\d+)\] invites you to table #(?P<table>\d+) \((?P<info>[^)]*)\); accept\?$'
 
 [messages]
-break_text = "Break! It is {curr_time} now, please continue the match not later than {resume_time}."
-bye        = "bye"
+# What players may type after !rules besides the language name, for example "!rules eng".
+# Every alias must point to a language table below.
+[messages.aliases]
+eng = "en"
 
-[messages.rules]
-en = "Replace with the rules reminder in English."
+# One table per language, all with the same keys; a missing key or a wrong {placeholder} stops
+# start-up. tournament.language picks the language of the bot's own messages; !rules <language>
+# writes the rules in any language listed here. Copy this table and translate the values to add one.
+[messages.en]
+rules            = "Replace with the rules reminder in English."
+break_text       = "Break! It is {curr_time} now, please continue the match not later than {resume_time}."
+bye              = "bye"
+set_usage        = "Usage: !set 3-2 (score of the left player - score of the right player)"
+break_usage      = "Usage: !break [minutes], at most {max_minutes} minutes"
+cheer_usage      = "Usage: !cheer 1 or !cheer 2 (the seat to cheer for)"
+seats_unreadable = "I cannot read the players' names right now, please try again"
+set_failed       = "Score not changed: {reason}"
+result_pair      = "{p1} : {p2} = {s1}-{s2}"        # points are written without trailing zeros
+result_team      = "{team1} : {team2} = {t1} : {t2}"   # team events only, above the pair line
+last_game        = "Last game"
+final            = "Ggs"
+break_hint       = "You may take a break after the next game."
+rules_unknown    = "Unknown language. Available: {languages}"
+cheers = [
+  "Go, {name}! You can do it!",
+  "{name}, show them what you have got!",
+  "Great energy, {name}! Keep going!",
+  "All eyes on {name} - make it count!",
+  "Stay calm and play your game, {name}!",
+]

@@ -18,6 +18,7 @@ from pathlib     import Path
 from typing      import Dict, List, Mapping, Optional, Pattern, Tuple
 from zoneinfo    import ZoneInfo, ZoneInfoNotFoundError
 
+from config.messages import MessagesConfig, MessageTexts, load_messages
 from config.reader import ConfigError, Section, parse_env_file
 from domain.types import Scoring
 
@@ -94,6 +95,8 @@ class ClientConfig:
         join_mode: One of JOIN_MODES.
         lobby_scan_seconds: Seconds between lobby scans.
         outbox_path: File for unconfirmed results; empty keeps them in memory.
+        max_pending_results: Finished games kept while the player names cannot be read.
+        unreadable_polls_before_alert: Polls with unsent games before the log escalates.
     """
     server_host          : str
     server_port          : int
@@ -102,6 +105,8 @@ class ClientConfig:
     join_mode            : str
     lobby_scan_seconds   : float
     outbox_path          : str
+    max_pending_results  : int
+    unreadable_polls_before_alert: int
 
 
 @dataclass(frozen=True)
@@ -186,9 +191,13 @@ class CommandsConfig:
     Attributes:
         prefix: Character that starts a chat command.
         admin_only: Command names (lower case, no prefix) reserved for admins.
+        cheer_cooldown_seconds: Seconds between two !cheer commands at one table.
+        break_max_minutes: Longest break an admin may announce with !break.
     """
     prefix    : str
     admin_only: Tuple[str, ...]
+    cheer_cooldown_seconds: float
+    break_max_minutes     : float
 
     def is_admin_only(self, command: str) -> bool:
         """Tells whether the command (with or without prefix) is reserved for admins."""
@@ -209,24 +218,6 @@ class PlayOkConfig:
     lobby_room: int
     selectors : Mapping[str, str]
     patterns  : Mapping[str, Pattern[str]]
-
-
-@dataclass(frozen=True)
-class MessagesConfig:
-    """The `[messages]` table.
-
-    Attributes:
-        break_text: Break announcement; may use {curr_time} and {resume_time}.
-        bye: Text posted when the bot leaves a table.
-        rules: Rules text by language.
-    """
-    break_text: str
-    bye       : str
-    rules     : Mapping[str, str]
-
-    def rules_for(self, language: str, fallback: str) -> str:
-        """Returns the rules text for the language, else the fallback language's."""
-        return self.rules.get(language) or self.rules[fallback]
 
 
 @dataclass(frozen=True)
@@ -261,6 +252,11 @@ class Settings:
     messages  : MessagesConfig
     secrets   : Secrets
     source    : str
+
+    @property
+    def texts(self) -> MessageTexts:
+        """The chat texts in the tournament language."""
+        return self.messages.texts(self.tournament.language)
 
 
 # ----------------------------------------------------------------------------- loader
@@ -337,19 +333,22 @@ class ConfigLoader:
             client.text("server_host"), client.integer("server_port", 1),
             client.number("poll_seconds", 0, True), client.number("reconnect_max_seconds", 0, True),
             client.choice("join_mode", JOIN_MODES), client.number("lobby_scan_seconds", 0, True),
-            client.text("outbox_path", allow_empty=True))
+            client.text("outbox_path", allow_empty=True),
+            client.integer("max_pending_results", 1),
+            client.integer("unreadable_polls_before_alert", 1))
         client.finish()
 
         tournament_cfg = ConfigLoader._tournament(root.table("tournament"), problems)
 
         commands = root.table("commands")
         commands_cfg = CommandsConfig(commands.text("prefix"),
-                                      tuple(c.lower() for c in commands.text_list("admin_only")))
+                                      tuple(c.lower() for c in commands.text_list("admin_only")),
+                                      commands.number("cheer_cooldown_seconds", 0),
+                                      commands.number("break_max_minutes", 0, True))
         commands.finish()
 
         playok_cfg = ConfigLoader._playok(root.table("playok"), problems)
-        messages_cfg = ConfigLoader._messages(root.table("messages"), tournament_cfg.language,
-                                              problems)
+        messages_cfg = load_messages(root.table("messages"), tournament_cfg.language, problems)
         root.finish()
 
         file_values = parse_env_file(env_file)
@@ -433,20 +432,3 @@ class ConfigLoader:
             compiled[name] = pattern
         p.finish()
         return PlayOkConfig(url, room, selectors, compiled)
-
-    @staticmethod
-    def _messages(m: Section, language: str, problems: List[str]) -> MessagesConfig:
-        break_text, bye = m.text("break_text"), m.text("bye")
-        if break_text:
-            try:
-                break_text.format(curr_time="00:00", resume_time="00:05")
-            except (KeyError, IndexError, ValueError) as exc:
-                problems.append(
-                    f"'messages.break_text' may only use {{curr_time}} and {{resume_time}} "
-                    f"({exc!r})")
-        rules = m.strings("rules")
-        if language and language not in rules:
-            problems.append(
-                f"'messages.rules' has no text for the tournament language {language!r}")
-        m.finish()
-        return MessagesConfig(break_text, bye, rules)

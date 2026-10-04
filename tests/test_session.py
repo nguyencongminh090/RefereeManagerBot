@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from referee.commands.dispatcher   import CommandDispatcher
 from referee.driver_port           import IDriver
-from referee.session          import MAX_PENDING_RESULTS, UNREADABLE_POLLS_BEFORE_ALERT, MatchSession
+from referee.session          import MatchSession
 from domain.types           import GameResult
 from network.messages      import RequestType
 from referee.session       import SessionState
@@ -12,7 +12,9 @@ from network.ports import IClientSocket
 from tests.test_page_parser import SETTINGS
 
 ADMIN = SETTINGS.tournament.admins[0]
-WIN_P1, WIN_P2, DRAW = "player #1 wins", "player #2 wins", "#draw"
+MAX_PENDING_RESULTS = SETTINGS.client.max_pending_results
+UNREADABLE_POLLS_BEFORE_ALERT = SETTINGS.client.unreadable_polls_before_alert
+WIN_P1, WIN_P2, DRAW = "player #1 wins", "player #2 wins", "draw"
 START = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
 
 
@@ -64,19 +66,20 @@ class Clock:
         return self.now
 
 
-def make_settings(total=12, break_after=0):
-    tournament = replace(SETTINGS.tournament, total_matches=total, break_after=break_after, break_minutes=5)
+def make_settings(total=12, break_after=0, tournament_format="team"):
+    tournament = replace(SETTINGS.tournament, total_matches=total, break_after=break_after,
+                         break_minutes=5, format=tournament_format)
     return replace(SETTINGS, tournament=tournament)
 
 
 class SessionTestCase(unittest.TestCase):
-    def build(self, names=("alice", "bob"), total=12, break_after=0):
+    def build(self, names=("alice", "bob"), total=12, break_after=0, tournament_format="team"):
         self.driver, self.socket, self.clock = FakeDriver(names), FakeSocket(), Clock()
         self.calls = []
         dispatcher = CommandDispatcher(self.driver, self.socket)
         dispatcher.register("!rules", lambda ctx: self.calls.append(("rules", ctx.sender)))
         dispatcher.register("!hello", lambda ctx: self.calls.append(("hello", ctx.sender)))
-        self.session = MatchSession(self.driver, dispatcher, self.socket, make_settings(total, break_after),
+        self.session = MatchSession(self.driver, dispatcher, self.socket, make_settings(total, break_after, tournament_format),
                                     clock=self.clock)
         return self.session
 
@@ -159,7 +162,7 @@ class TestCompletion(SessionTestCase):
         self.session.process_message("+", DRAW)
         self.assertEqual(self.session.context.state, SessionState.COMPLETED)
         self.assertEqual(self.driver.left, 1)
-        self.assertEqual(self.driver.said, [SETTINGS.messages.bye])
+        self.assertEqual(self.driver.said, [SETTINGS.texts.bye])
 
     def test_nothing_is_reported_after_completion(self):
         self.build(total=1)
@@ -178,7 +181,7 @@ class TestCompletion(SessionTestCase):
         self.session.process_message("+", WIN_P1)
         self.session.process_message("+", WIN_P2)
         self.assertEqual(self.session.context.state, SessionState.BREAK_TIME)
-        self.assertEqual(self.driver.said, [SETTINGS.messages.break_text.format(curr_time="10:00", resume_time="10:05")])
+        self.assertEqual(self.driver.said, [SETTINGS.texts.break_text.format(curr_time="10:00", resume_time="10:05")])
         self.clock.now += timedelta(minutes=5)
         self.session.poll()
         self.assertEqual(self.session.context.state, SessionState.IN_PROGRESS)
@@ -272,6 +275,15 @@ class TestRetainedResults(SessionTestCase):
         self.assertEqual(1, len(self.socket.packets))
         self.assertEqual(["carol", "dave"], self.result()["players"])
 
+    def test_result_keeps_the_seats_seen_when_the_game_ended(self):
+        self.build()
+        self.driver.names = ("", "")                 # seats read empty when the game ends
+        self.session.process_message("+", WIN_P1)
+        self.driver.names = ("bob", "alice")         # the players sit down the other way round
+        self.session.poll()
+        self.assertEqual(["alice", "bob"], self.result()["players"])
+        self.assertEqual(GameResult.WIN.value, self.result()["scores"][0])
+
     def test_retained_results_keep_their_order_and_own_ids(self):
         self.build(names=("", ""))
         for line in (WIN_P1, WIN_P2, DRAW):
@@ -306,6 +318,139 @@ class TestRetainedResults(SessionTestCase):
         self.driver.names = ("carol", "dave")
         self.session.poll()
         self.assertEqual(0, self.session.context.games_played)
+
+
+class TestManualBreak(SessionTestCase):
+    def announced(self, resume):
+        return SETTINGS.texts.break_text.format(curr_time="10:00", resume_time=resume)
+
+    def test_admin_break_uses_the_configured_length(self):
+        self.build()
+        self.session.process_message(ADMIN, "!break")
+        self.assertEqual([self.announced("10:05")], self.driver.said)
+        self.assertEqual(SessionState.BREAK_TIME, self.session.context.state)
+        self.clock.now += timedelta(minutes=5)
+        self.session.poll()
+        self.assertEqual(SessionState.IN_PROGRESS, self.session.context.state)
+
+    def test_admin_break_may_name_the_minutes(self):
+        self.build()
+        self.session.process_message(ADMIN, "!break 10")
+        self.assertEqual([self.announced("10:10")], self.driver.said)
+
+    def test_minutes_outside_the_limit_get_the_usage_text(self):
+        self.build()
+        usage = SETTINGS.texts.break_usage.format(max_minutes=f"{SETTINGS.commands.break_max_minutes:g}")
+        for text in ("!break 0", "!break -5", "!break x", "!break 99", "!break 5 6"):
+            self.session.process_message(ADMIN, text)
+        self.assertEqual([usage] * 5, self.driver.said)
+        self.assertEqual(SessionState.IN_PROGRESS, self.session.context.state)
+
+    def test_non_admin_cannot_start_a_break(self):
+        self.build()
+        self.session.process_message("alice", "!break")
+        self.assertEqual([], self.driver.said)
+        self.assertEqual(SessionState.IN_PROGRESS, self.session.context.state)
+
+
+def team_ack(match_id, games, **extra):
+    return {**ack(match_id, games), "points": [3.0, 2.0], "teams": ["Alpha", "Beta"],
+            "team_points": [7.0, 5.0], **extra}
+
+
+class TestResultLines(SessionTestCase):
+    def sent(self):
+        self.session.process_message("+", WIN_P1)
+        return self.socket.packets[-1]["meta"]["match_id"]
+
+    def test_individual_event_writes_one_pair_line(self):
+        self.build(tournament_format="individual")
+        self.session.on_ack(team_ack(self.sent(), 5))
+        self.assertEqual(["alice : bob = 3-2"], self.driver.said)
+
+    def test_team_event_writes_the_team_line_then_the_pair_line(self):
+        self.build()
+        self.session.on_ack(team_ack(self.sent(), 5))
+        self.assertEqual(["Alpha : Beta = 7 : 5", "alice : bob = 3-2"], self.driver.said)
+
+    def test_a_confirmed_retry_writes_nothing(self):
+        self.build()
+        self.session.on_ack(team_ack(self.sent(), 5, duplicate=True))
+        self.assertEqual([], self.driver.said)
+
+    def test_an_ack_of_another_session_writes_nothing(self):
+        self.build()
+        self.session.on_ack(team_ack("foreign", 5))
+        self.assertEqual([], self.driver.said)
+
+    def test_halves_are_written_without_trailing_zeros(self):
+        self.build()
+        self.session.on_ack(team_ack(self.sent(), 5, points=[2.5, 1.5], team_points=[6.5, 5.5]))
+        self.assertEqual(["Alpha : Beta = 6.5 : 5.5", "alice : bob = 2.5-1.5"], self.driver.said)
+
+
+class TestInfoMessages(SessionTestCase):
+    def sent(self):
+        self.session.process_message("+", WIN_P1)
+        return self.socket.packets[-1]["meta"]["match_id"]
+
+    def said_after(self, games, total=12, break_after=0):
+        self.build(total=total, break_after=break_after, tournament_format="individual")
+        self.session.on_ack(team_ack(self.sent(), games))
+        return self.driver.said[1:]                              # after the pair line
+
+    def test_nothing_extra_in_the_middle_of_a_match(self):
+        self.assertEqual([], self.said_after(5))
+
+    def test_last_game_is_announced_one_game_before_the_end(self):
+        self.assertEqual([SETTINGS.texts.last_game], self.said_after(11))
+
+    def test_the_final_text_comes_before_the_goodbye(self):
+        self.build(tournament_format="individual")
+        self.session.on_ack(team_ack(self.sent(), 12, complete=True))
+        self.assertEqual(["alice : bob = 3-2", SETTINGS.texts.final, SETTINGS.texts.bye], self.driver.said)
+
+    def test_break_hint_comes_one_game_before_a_break(self):
+        self.assertEqual([SETTINGS.texts.break_hint], self.said_after(9, total=15, break_after=10))
+
+    def test_set_score_answers_also_get_the_info_message(self):
+        self.build(tournament_format="individual")
+        self.session.on_score_set({**team_ack("x", 11)})
+        self.assertEqual(["alice : bob = 3-2", SETTINGS.texts.last_game], self.driver.said)
+
+
+class TestSetScoreAnswers(SessionTestCase):
+    ANSWER = {"games": 5, "limit": 12, "complete": False, "players": ["alice", "bob"],
+              "points": [3.0, 2.0], "teams": ["Alpha", "Beta"], "team_points": [3.0, 2.0]}
+
+    def test_the_team_and_pair_lines_are_written_and_the_game_count_follows_the_server(self):
+        self.build()
+        self.session.on_score_set(self.ANSWER)
+        self.assertEqual(["Alpha : Beta = 3 : 2", "alice : bob = 3-2"], self.driver.said)
+        self.assertEqual(5, self.session.context.games_played)
+
+    def test_an_answer_without_scores_is_logged_and_writes_nothing(self):
+        self.build()
+        self.session.process_message("+", WIN_P1)
+        with self.assertLogs("referee.session", level="WARNING"):
+            self.session.on_ack({"match_id": self.socket.packets[-1]["meta"]["match_id"], "games": 3})
+        self.assertEqual([], self.driver.said)
+        self.assertEqual(3, self.session.context.games_played)
+
+    def test_halves_are_written_without_trailing_zeros(self):
+        self.build(tournament_format="individual")
+        self.session.on_score_set({**self.ANSWER, "points": [2.5, 1.5]})
+        self.assertEqual(["alice : bob = 2.5-1.5"], self.driver.said)
+
+    def test_a_complete_pair_ends_the_session(self):
+        self.build()
+        self.session.on_score_set({**self.ANSWER, "games": 12, "complete": True})
+        self.assertEqual(SessionState.COMPLETED, self.session.context.state)
+
+    def test_a_refusal_is_explained(self):
+        self.build()
+        self.session.on_set_refused("no way")
+        self.assertEqual(["Score not changed: no way"], self.driver.said)
 
 
 class TestCommands(SessionTestCase):

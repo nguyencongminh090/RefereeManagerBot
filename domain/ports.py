@@ -52,6 +52,24 @@ class MatchRecord:
     bot_name : Optional[str] = None
 
 
+@dataclass(frozen=True)
+class PairScoreChange:
+    """A correction of the running score of one pair of players.
+
+    Attributes:
+        p1_name: Nickname of the first player.
+        p2_name: Nickname of the second player.
+        p1_points: Game points the first player should have in the pair's micro-match.
+        p2_points: Game points the second player should have.
+        actor: Who asked for the correction; recorded in the audit log.
+    """
+    p1_name  : str
+    p2_name  : str
+    p1_points: float
+    p2_points: float
+    actor    : str
+
+
 class ITeamRepository(IScoreSubject):
     """The use-cases the server runs against the result store, bound to one tournament."""
 
@@ -68,7 +86,22 @@ class ITeamRepository(IScoreSubject):
 
     @abstractmethod
     def pair_score(self, game_id: int) -> Dict[str, Any]:
-        """Returns the running micro-match score of the two players of a stored game."""
+        """Returns the running micro-match score of the two players of a stored game.
+
+        Keys: games, limit, players, points, teams, team_points (the fixture total of the two
+        teams; equal to the pair in an individual tournament) and complete.
+        """
+
+    @abstractmethod
+    def set_pair_score(self, change: PairScoreChange) -> Dict[str, Any]:
+        """Corrects the pair's score with audited games and notifies observers.
+
+        Returns:
+            The pair score after the correction (same shape as `pair_score`).
+
+        Raises:
+            StorageError: A subclass describing why the score cannot be set; nothing changes then.
+        """
 
     @abstractmethod
     def roster(self) -> List[Dict[str, Any]]:

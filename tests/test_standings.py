@@ -171,6 +171,46 @@ class TeamMatchPointsTests(unittest.TestCase):
         self.assertEqual(3.0, table[0].points)                       # game points stay available
 
 
+class PairScoreTeamTotalsTests(unittest.TestCase):
+    def setUp(self):
+        self.store = open_store(self)
+        self.tid = self.store.create_tournament(TournamentSpec("T", "team", team_size=2, games_per_pair=4))
+        for team, letters in (("Alpha", "ab"), ("Beta", "cd")):
+            self.store.add_team(self.tid, team)
+            for letter in letters:
+                self.store.add_player(self.tid, team, NewPlayer(f"P {letter}", f"wbc{letter}"))
+
+    def record(self, a, b, results):
+        return self.store.record_game(self.tid, GameRecord(a, b, *results))
+
+    def test_ack_carries_the_score_of_the_whole_team_match(self):
+        self.record("wbca", "wbcc", (WIN, LOSS))
+        self.record("wbcb", "wbcd", (DRAW, DRAW))
+        last = self.record("wbcd", "wbca", (WIN, LOSS))        # Beta's player won, seated first
+        score = self.store.pair_score_for_game(last, SCORING)
+        self.assertEqual(["wbcd", "wbca"], score["players"])
+        self.assertEqual([1.0, 0.0], score["points"])           # this pair only: wbca-wbcc 1-0, wbcd-wbca 1-0
+        self.assertEqual(["Beta", "Alpha"], score["teams"])
+        self.assertEqual([1.5, 1.5], score["team_points"])
+
+    def test_team_totals_ignore_voided_games(self):
+        voided = self.record("wbca", "wbcc", (WIN, LOSS))
+        self.store.void_game(voided)
+        last = self.record("wbcb", "wbcd", (WIN, LOSS))
+        score = self.store.pair_score_for_game(last, SCORING)
+        self.assertEqual([1.0, 0.0], score["team_points"])
+
+    def test_individual_tournament_team_points_equal_player_points(self):
+        store = open_store(self)
+        tid = store.create_tournament(TournamentSpec("I", "individual", games_per_pair=2))
+        for name in ("A", "B"):
+            store.add_individual(tid, NewIndividual(f"Person {name}", f"wbc{name.lower()}"))
+        game_id = store.record_game(tid, GameRecord("wbca", "wbcb", WIN, LOSS))
+        score = store.pair_score_for_game(game_id, SCORING)
+        self.assertEqual(score["points"], score["team_points"])
+        self.assertEqual(score["players"], score["teams"])
+
+
 class AdminCliTests(unittest.TestCase):
     def test_sudden_death_command_and_standings_output(self):
         import contextlib, io, os, tempfile

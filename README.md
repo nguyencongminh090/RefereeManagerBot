@@ -11,16 +11,17 @@ referee bot ...                              --TCP-->
 ```
 
 - `server.py`: authenticates clients with a token, validates and stores `MATCH_RESULT` messages (idempotent by game
-  id), answers `MATCH_ACK` or `ERROR <code>`, handles roster queries, table claims, heartbeats and periodic `.bak` backups.
+  id), answers `MATCH_ACK` (with the pair and team-match score) or `ERROR <code>`, handles roster queries, table claims,
+  admin score corrections (`SET_SCORE` -> `SCORE_SET`), heartbeats and periodic `.bak` backups.
 - `domain/`: pure types (`GameResult`, `Scoring`) and ports (`ITeamRepository`, `MatchRecord`); imports only the stdlib.
 - `network/`: wire protocol and messages, socket ports, `TcpServerSocket`, `TcpClientSocket` (auth, reconnect with
   backoff, heartbeat, results re-sent until acknowledged).
 - `storage/`: `schema.sql`, `Database`, `TournamentStore`, `SqliteTeamRepository`. `games` is the source of truth.
 - `referee/`: the client side. `html_dom.py` and `page_parser.py` (stdlib HTML parsing of chat, seats, lobby),
   `driver.py` (`SeleniumDriver`, port in `driver_port.py`), `browser.py` (Firefox factory), `lobby.py`, `session.py`
-  (`MatchSession`), `commands/` (chat commands).
+  (`MatchSession`), `info_text.py` (which game-count text to write), `commands/` (chat commands).
 - `serverapp/`: server-side parts (sessions, claims, router, backup).
-- `config/`: `ConfigLoader` and `config.example.toml`.
+- `config/`: `ConfigLoader`, `messages.py` (chat texts per language) and `config.example.toml`.
 - `tools/admin_db.py`: admin CLI for the database.
 
 ## Configuration
@@ -29,6 +30,49 @@ referee bot ...                              --TCP-->
 2. `cp config/config.example.toml config/config.toml` and edit it (rules, selectors, texts, ports). Unknown or missing keys stop start-up with a message.
 3. Create `.env` (git-ignored) with the secrets: `PLAYOK_USER`, `PLAYOK_PASS`, `BOT_TOKEN`.
    Real environment variables override `.env`. Use `--config` or `REFEREE_CONFIG` for another config file.
+
+## Chat commands
+
+The prefix is `[commands] prefix` (default `!`). Commands listed in `[commands] admin_only` work only for the
+nicknames in `[tournament] admins` (several are allowed, case is ignored); everyone else is ignored silently.
+Admin-only: `leave`, `rules`, `set`, `break`, `start`. `start` is listed but not implemented yet.
+
+| Command | Who | What it does |
+|---|---|---|
+| `!score` | everyone | Writes the standings in the table chat. |
+| `!cheer 1` / `!cheer 2` | everyone | Cheers the player in that seat with a random sentence from `cheers`. One per `cheer_cooldown_seconds` per table. |
+| `!rules [language]` | admin | Writes the rules reminder: in the tournament language, or in another one (a language name or alias such as `eng`). An unknown language is answered with the configured ones. |
+| `!set L-R` | admin | Corrects the pair's score after a bot restart or a lost count: `L` = points of the player in the left seat (#1) now, `R` = right seat (#2). Points are game points, a draw is half (`!set 2.5-1.5`). |
+| `!break [minutes]` | admin | Announces a break and the time to come back. Default length `tournament.break_minutes`, at most `commands.break_max_minutes`. |
+| `!leave` | admin | The bot says goodbye and leaves the table. |
+
+**`!set` in detail.** The bot reads the seat names when the command arrives and asks the server. The server compares
+the pair's counted games with the numbers, then voids the newest games while a player is above the target and records
+the fewest corrective games (wins, then draws) that reach it, in the pair's fixture. Everything is one transaction
+and every game is audit-logged under the admin's nickname. Setting the same score twice changes nothing. A team
+event updates the team score by itself, because team totals are derived from the games. The server refuses (and the
+bot says why in the chat) when the sender is not an admin, when more games than `total_matches` would be needed, or
+when no mix of wins and draws gives the score.
+
+**After every new result** the bot writes the score: in a team event `Alpha : Beta = 7 : 5` and then the pair line
+`alice : bob = 3-2`; in an individual event only the pair line. Then, when it applies, one info text: `final`
+when the match is over, `last_game` one game before, `break_hint` one game before a break (`break_after`). The game
+count is the server's. A result the server already had (a re-sent one) writes nothing. Results are scored with the
+seat names read when the game ended, so a player who changes seats cannot move a win to the other player.
+
+## Chat texts and languages
+
+All texts the bot writes are in `[messages]`, one table per language, all with the same keys (see
+`config/config.example.toml`). A missing key, a wrong `{placeholder}`, a cheer without `{name}`, an alias to an unknown
+language or a `tournament.language` without a table stops start-up and names the table.
+
+- `tournament.language` selects the language of the bot's own messages (results, breaks, goodbye, cheers, usage).
+- `!rules <language>` can write the rules in any configured language. `[messages.aliases]` lists other spellings,
+  for example `eng = "en"`, `hun = "hu"`, `cze = "cz"`.
+- To add a language: copy `[messages.en]`, rename it (lower case) and translate the values; add its aliases.
+- Numbers that depend on the tournament are config keys, not code: `total_matches`, `break_after`, `break_minutes`,
+  `commands.break_max_minutes`, `commands.cheer_cooldown_seconds`, `client.max_pending_results`,
+  `client.unreadable_polls_before_alert`. The admin sets them per year.
 
 ## Security and operations
 
@@ -88,11 +132,11 @@ Tests that use saved PlayOK pages in the repo root are skipped when those files 
 ```
 server.py  client.py
 domain/    types.py, ports.py                      (stdlib only)
-config/    settings.py, config.example.toml        (-> domain)
+config/    settings.py, messages.py, reader.py, config.example.toml  (-> domain)
 network/   messages.py, ports.py, protocol.py, options.py, outbox.py, server_socket.py, client_socket.py
-storage/   schema.sql, database.py, tournament_store.py, sqlite_repository.py, models.py, errors.py, ...  (-> domain)
-referee/   html_dom.py, page_parser.py, lobby.py, driver.py, driver_port.py, browser.py, session.py, commands/
-serverapp/ claims.py, sessions.py, router.py, backup.py, match_request.py
+storage/   schema.sql, database.py, tournament_store.py, sqlite_repository.py, pair_adjust.py, models.py, errors.py, ...  (-> domain)
+referee/   html_dom.py, page_parser.py, lobby.py, driver.py, driver_port.py, browser.py, session.py, info_text.py, commands/
+serverapp/ claims.py, sessions.py, router.py, backup.py, match_request.py (MATCH_RESULT and SET_SCORE packets)
 tools/     admin_db.py, seed_demo.py
 tests/
 data/      *.db is git-ignored
@@ -101,7 +145,8 @@ data/      *.db is git-ignored
 ## Status
 
 Done: server, storage and tie-breaks, config, client socket, page parser, `MatchSession`, chat commands (`!score`,
-`!rules`, `!leave`), `LobbyWatcher` auto-join, `Client` wiring, admin CLI. All of it is covered by unit tests with fakes.
+`!rules [language]`, `!leave`, `!set`, `!break`, `!cheer`), result lines and game-count texts, per-language chat texts,
+`LobbyWatcher` auto-join, `Client` wiring, admin CLI. All of it is covered by unit tests with fakes.
 
 Live trial, 2026-10-04 (one bot, `--no-chat`, individual format, two tables with real players): login, lobby scan,
 table claim, joining a full table, reading the table chat, parsing `player #1/#2 wins`, sending results, server
@@ -109,8 +154,9 @@ storage and standings all worked; 4 games were recorded and the referee confirme
 afterwards: the `>>` join button is hidden by the page on a full table, so the bot clicks the lobby row instead;
 a page error no longer kills the bot (`DriverError`, retried, stops after 30 failed passes in a row).
 
-Not yet run on the live site: invite mode, `!` commands with chat enabled, reconnect and outbox re-send after a
-server restart, `--headless`, the `#draw` line pattern, table-rule warnings. Expect to adjust selectors and patterns
+Not yet run on the live site: invite mode, every `!` command and the result lines with chat enabled (the trial ran with
+`--no-chat`), `!set` after a reconnect, reconnect and outbox re-send after a
+server restart, `--headless`, the `draw` line pattern, table-rule warnings. Expect to adjust selectors and patterns
 in `config.toml` if PlayOK changes its page.
 
 Design notes: `proposal.md` (Vietnamese), `text-processing.md`.

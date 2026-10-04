@@ -296,6 +296,7 @@ class RepositoryAdapterTests(unittest.TestCase):
         self.assertEqual(["Alpha : Beta = 1 : 0"], seen)
         self.assertEqual("Alpha : Beta = 1 : 0", repo.snapshot())
         self.assertEqual({"games": 1, "limit": None, "players": ["a1", "b1"], "points": [1.0, 0.0],
+                          "teams": ["Alpha", "Beta"], "team_points": [1.0, 0.0],
                           "complete": False}, repo.pair_score(game_id))
         self.assertEqual(["a1", "b1"], [p["nickname"] for p in repo.roster()])
         self.assertEqual("bot1", store.list_games(tid)[0]["bot_name"])

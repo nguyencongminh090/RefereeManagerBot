@@ -11,6 +11,7 @@ class RequestType(Enum):
     ROSTER_QUERY = 5
     TABLE_CLAIM  = 6
     TABLE_RELEASE = 7
+    SET_SCORE    = 8
 
 
 class ResponseType(Enum):
@@ -23,3 +24,4 @@ class ResponseType(Enum):
     CLAIM_OK   = 106
     CLAIM_DENIED = 107
     MATCH_ACK  = 108
+    SCORE_SET  = 109

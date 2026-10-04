@@ -216,6 +216,21 @@ class ClientTests(unittest.TestCase):
         self.client.step()
         self.assertEqual(SessionState.IN_PROGRESS, self.client._session.context.state)
 
+    def test_set_score_answer_is_written_to_the_chat_and_updates_the_count(self):
+        self.joined_session()
+        self.reply(ResponseType.SCORE_SET, games=5, limit=12, complete=False, players=["alice", "bob"],
+                   points=[3.0, 2.0], teams=["Alpha", "Beta"], team_points=[3.0, 2.0])
+        self.client.step()
+        self.assertEqual(["alice : bob = 3-2"], self.driver.said[-1:])
+        self.assertEqual(5, self.client._session.context.games_played)
+
+    def test_refused_set_score_is_explained_in_the_chat(self):
+        self.joined_session()
+        self.reply(ResponseType.ERROR, code="NOT_ADMIN", message="'x' is not a tournament admin",
+                   request=RequestType.SET_SCORE.value)
+        self.client.step()
+        self.assertEqual(["Score not changed: 'x' is not a tournament admin"], self.driver.said[-1:])
+
     def test_ack_without_a_session_is_ignored(self):
         self.build()
         self.reply(ResponseType.MATCH_ACK, match_id="x", games=1, complete=True)
@@ -270,7 +285,7 @@ class HandlerTests(unittest.TestCase):
 
     def test_rules_writes_the_configured_text(self):
         self.dispatcher.dispatch("anyone", "!rules")
-        self.assertEqual([SETTINGS.messages.rules_for(SETTINGS.tournament.language, "en")], self.driver.said)
+        self.assertEqual([SETTINGS.texts.rules], self.driver.said)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ TOKEN   = "test-token"
 ROSTER  = ("team,country,full_name,nickname,role,captain,contact\n"
            "Alpha,Demoland,A One,wbca1,main,yes,\nAlpha,Demoland,A Two,wbca2,main,,\nAlpha,Demoland,A Three,wbca3,main,,\n"
            "Beta,Demoland,B One,wbcb1,main,yes,\nBeta,Demoland,B Two,wbcb2,main,,\nBeta,Demoland,B Three,wbcb3,main,,\n")
+ADMIN   = "wbcexampleadmin"          # the admin of config.example.toml
 WIN, LOSS, DRAW = GameResult.WIN.value, GameResult.LOSS.value, GameResult.DRAW.value
 
 
@@ -227,6 +228,61 @@ class ServerTests(unittest.TestCase):
         self.assertEqual("UNKNOWN_TYPE", b.recv_type(ResponseType.ERROR)["data"]["code"])
         b.sock.sendall(PacketProtocol.encode(["not", "a", "dict"]))
         self.assertEqual("UNKNOWN_TYPE", b.recv_type(ResponseType.ERROR)["data"]["code"])
+
+    # ------------------------------------------------------------- set score
+    def set_score(self, bot, scores, sender=ADMIN, players=("wbca1", "wbcb1")):
+        bot.send(RequestType.SET_SCORE, {"sender": sender, "players": list(players), "scores": scores})
+
+    def test_admin_sets_the_score_of_a_pair_and_everybody_hears_it(self):
+        server = self.start()
+        b1, b2 = self.bot("bot1"), self.bot("bot2")
+        b1.result("wbca1", WIN, "wbcb1", LOSS)
+        b1.recv_type(ResponseType.MATCH_ACK)
+        b2.recv_type(ResponseType.BROADCAST)
+        self.set_score(b1, [3, 2])
+        data = b1.recv_type(ResponseType.SCORE_SET)["data"]
+        self.assertEqual(([3.0, 2.0], 5, ["Alpha", "Beta"], [3.0, 2.0]),
+                         (data["points"], data["games"], data["teams"], data["team_points"]))
+        self.assertEqual("Alpha : Beta = 3 : 2", b2.recv_type(ResponseType.BROADCAST)["text"])
+        self.assertEqual(5, len(server._store.list_games("Demo Tournament")))
+        self.assertEqual(ADMIN, server._store.audit_log(1)[0]["actor"])
+
+    def test_setting_the_same_score_again_changes_nothing(self):
+        server = self.start()
+        b = self.bot()
+        b.result("wbca1", WIN, "wbcb1", LOSS)
+        b.recv_type(ResponseType.MATCH_ACK)
+        for _ in range(2):
+            self.set_score(b, [2, 1])
+            b.recv_type(ResponseType.SCORE_SET)
+        self.assertEqual(3, len(server._store.list_games("Demo Tournament")))
+
+    def test_only_admins_may_set_a_score(self):
+        server = self.start()
+        b = self.bot()
+        b.result("wbca1", WIN, "wbcb1", LOSS)
+        b.recv_type(ResponseType.MATCH_ACK)
+        self.set_score(b, [3, 2], sender="wbcb1")
+        error = b.recv_type(ResponseType.ERROR)["data"]
+        self.assertEqual(("NOT_ADMIN", RequestType.SET_SCORE.value), (error["code"], error["request"]))
+        self.assertEqual(1, len(server._store.list_games("Demo Tournament")))
+
+    def test_bad_or_impossible_set_score_requests_get_an_error(self):
+        server = self.start()
+        b = self.bot()
+        b.result("wbca1", WIN, "wbcb1", LOSS)
+        b.recv_type(ResponseType.MATCH_ACK)
+        b.send(RequestType.SET_SCORE, {"sender": ADMIN, "players": ["wbca1"], "scores": [1, 1]})
+        self.assertEqual("BAD_PACKET", b.recv_type(ResponseType.ERROR)["data"]["code"])
+        b.send(RequestType.SET_SCORE, {"sender": ADMIN, "players": ["wbca1", "wbcb1"], "scores": [-1, 1]})
+        self.assertEqual("BAD_PACKET", b.recv_type(ResponseType.ERROR)["data"]["code"])
+        self.set_score(b, [2, 0.5])                              # no draws/wins make 2-0.5
+        self.assertEqual("BAD_RESULT", b.recv_type(ResponseType.ERROR)["data"]["code"])
+        self.set_score(b, [20, 0])                               # more than 12 games
+        self.assertEqual("MICROMATCH_FULL", b.recv_type(ResponseType.ERROR)["data"]["code"])
+        self.set_score(b, [1, 1], players=("ghost", "wbcb1"))
+        self.assertEqual("UNKNOWN_PLAYER", b.recv_type(ResponseType.ERROR)["data"]["code"])
+        self.assertEqual(1, len(server._store.list_games("Demo Tournament")))
 
     # ----------------------------------------------------------- roster/tables
     def test_roster_query(self):

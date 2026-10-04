@@ -5,6 +5,7 @@ from storage.audit import Auditor
 from storage.database import Database
 from storage.fixtures import FixtureAdmin
 from storage.games import GameLedger
+from storage.pair_adjust import PairAdjuster, PairTarget
 from storage.models import (EntrantPair, GameRecord, NewFixture, NewIndividual, NewPlayer,
                             RankingRules, Ref, Scoring, StandingRow, TournamentSpec)
 from storage.players import PlayerAdmin
@@ -40,6 +41,7 @@ class TournamentStore:
         self._players = PlayerAdmin(db, self._auditor)
         self._fixtures = FixtureAdmin(db, self._auditor)
         self._games = GameLedger(db, self._auditor)
+        self._pairs = PairAdjuster(db, self._auditor, self._games)
         self._sudden_death = SuddenDeathLedger(db, self._auditor)
         self._standings = StandingsQuery(db)
         self._report = RosterReport(db)
@@ -162,6 +164,10 @@ class TournamentStore:
     def record_game(self, tournament: Ref, game: GameRecord) -> int:
         """Records one finished game atomically and returns its id (see GameLedger.record)."""
         return self._games.record(tournament, game)
+
+    def set_pair_score(self, tournament: Ref, target: PairTarget, scoring: Scoring) -> int:
+        """Makes the counted score of a pair equal the target (see PairAdjuster.set_score)."""
+        return self._pairs.set_score(tournament, target, scoring)
 
     def void_game(self, game_id: int, voided: bool = True) -> None:
         """Takes a game out of the standings without deleting it."""

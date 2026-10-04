@@ -4,6 +4,7 @@
 so the loader can report all of them at once.
 """
 import difflib
+import string
 from pathlib import Path
 from typing  import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -140,6 +141,11 @@ class Section:
         raw = self._raw(key)
         return Section(raw, self._key(key), self._problems)
 
+    def tables(self, skip: Sequence[str] = ()) -> Dict[str, "Section"]:
+        """Returns every nested table except those named in `skip`, by name."""
+        return {key: self.table(key) for key, value in self._data.items()
+                if key not in skip and isinstance(value, dict)}
+
     def strings(self, key: str, known: Optional[Sequence[str]] = None) -> Dict[str, str]:
         """A table of name -> string. With `known`, those names are required and others rejected."""
         sec = self.table(key)
@@ -159,6 +165,32 @@ class Section:
                 hint = difflib.get_close_matches(key, list(self._used), n=1)
                 suggestion = f" (did you mean '{hint[0]}'?)" if hint else ""
                 self._problems.append(f"unknown key '{self._key(key)}'{suggestion}")
+
+
+# ----------------------------------------------------------------------------- templates
+def template_problems(key: str, text: str, allowed: Sequence[str],
+                      required: Sequence[str] = ()) -> List[str]:
+    """Checks the `{placeholders}` of a chat text against the names it may (and must) use.
+
+    Args:
+        key: Config key shown in the messages, for example `messages.cheers`.
+        text: The template.
+        allowed: Placeholder names the bot fills in.
+        required: Placeholder names the text must contain.
+
+    Returns:
+        One message per problem; empty when the template is fine.
+    """
+    try:
+        used = {name for _, name, _, _ in string.Formatter().parse(text) if name is not None}
+    except ValueError as exc:
+        return [f"'{key}' is not a valid template: {exc}"]
+    unknown = sorted(used - set(allowed))
+    missing = sorted(set(required) - used)
+    allowed_text = ", ".join("{" + n + "}" for n in allowed) or "no placeholders"
+    problems = [f"'{key}' may only use {allowed_text}, not {{{n}}}" for n in unknown]
+    problems += [f"'{key}' must contain {{{n}}}" for n in missing]
+    return problems
 
 
 # ----------------------------------------------------------------------------- .env

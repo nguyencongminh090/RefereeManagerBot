@@ -91,7 +91,7 @@ class ChatTests(unittest.TestCase):
 
     def test_result_tracker(self):
         dom = PARSER.parse(page(chat=["<b>alice</b>: player #1 wins", "+ #2 exceeded time for game", "+ player #1 wins",
-                                      "+ player #2 wins", "+ #draw", "+ bob [1182] joins", "+ bob leaves", "+ #1 asks to undo the turn"]))
+                                      "+ player #2 wins", "+ draw", "+ bob [1182] joins", "+ bob leaves", "+ #1 asks to undo the turn"]))
         tracker = PARSER.result_tracker()
         outcomes = [o for o in (tracker.feed(l) for l in PARSER.chat_lines(dom)) if o]
         self.assertEqual([GameOutcome(1, False, 2), GameOutcome(2, False, None), GameOutcome(None, True, None)], outcomes)

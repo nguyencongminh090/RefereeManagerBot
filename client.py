@@ -131,6 +131,7 @@ class Client:
             ResponseType.CLAIM_OK.value    : self._on_claim_ok_packet,
             ResponseType.CLAIM_DENIED.value: self._on_claim_denied_packet,
             ResponseType.MATCH_ACK.value   : self._on_match_ack,
+            ResponseType.SCORE_SET.value   : self._on_score_set,
             ResponseType.ERROR.value       : self._on_server_error,
         }
         handler = handlers.get(packet.get("type"))
@@ -155,9 +156,16 @@ class Client:
         if self._session is not None:
             self._session.on_ack(packet.get("data") or {})
 
+    def _on_score_set(self, packet: Dict[str, Any]) -> None:
+        if self._session is not None:
+            self._session.on_score_set(packet.get("data") or {})
+
     def _on_server_error(self, packet: Dict[str, Any]) -> None:
         data     = packet.get("data") or {}
         match_id = data.get("match_id")
+        if data.get("request") == RequestType.SET_SCORE.value and self._session is not None:
+            self._session.on_set_refused(str(data.get("message", data.get("code"))))
+            return
         if match_id and self._session is not None:
             self._session.on_rejected(str(data.get("code")), match_id)
             return
