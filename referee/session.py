@@ -12,7 +12,7 @@ from config.settings       import Settings
 from network.messages      import RequestType
 from network.ports         import IClientSocket
 from referee.commands.dispatcher import CommandDispatcher
-from referee.driver_port   import IDriver
+from referee.driver_port   import DriverError, IDriver
 from referee.info_text     import info_key
 from referee.page_parser   import ChatLine, ResultTracker
 
@@ -142,6 +142,7 @@ class MatchSession:
         self._rejected   = 0
         self._has_ack    = False
         self._failed_polls = 0
+        self._has_left = False
         self._refresh_names()
 
     @property
@@ -200,6 +201,17 @@ class MatchSession:
             self.leave()
 
     def _announce(self, data: Dict[str, Any]) -> None:
+        """Writes the server's answer to the chat; a page error loses the lines but nothing else.
+
+        The result is already stored, so the session must still go on (and complete) when the
+        chat cannot be written.
+        """
+        try:
+            self._write_announcement(data)
+        except DriverError as error:
+            logger.warning("Score announcement lost on a page error: %s", error)
+
+    def _write_announcement(self, data: Dict[str, Any]) -> None:
         """Writes the score lines of a server answer, then the info text for the game count."""
         texts = self._rules.texts
         if "players" not in data or "points" not in data:
@@ -243,7 +255,18 @@ class MatchSession:
             logger.error("Leaving with %d unsent results: %s",
                          len(self._pending), list(self._pending))
         self._driver.send_message(self._rules.texts.bye)
+        self.ensure_left()
+
+    def ensure_left(self) -> None:
+        """Leaves the table unless that already happened.
+
+        `leave` may stop on a page error after the session is already completed; the client calls
+        this again on its next pass until the table is really left.
+        """
+        if self._has_left:
+            return
         self._driver.leave_table()
+        self._has_left = True
 
     def _refresh_names(self) -> bool:
         p1, p2 = self._driver.get_players_name()

@@ -237,6 +237,7 @@ class TcpClientSocket(IClientSocket):
             self._authed.set()
             self._first_answer.set()
             self._resend_pending()
+            self._deliver(packet)               # the client re-asserts what it holds on every connection
             return True
         if kind == ResponseType.ERROR.value and data.get("code") == _AUTH_FAILED_CODE:
             logger.error("the server refused our token")
@@ -245,11 +246,14 @@ class TcpClientSocket(IClientSocket):
             return False
         if kind in (ResponseType.MATCH_ACK.value, ResponseType.ERROR.value):
             self._outbox.remove(data.get("match_id"))   # answered, accepted or rejected
+        self._deliver(packet)
+        return False
+
+    def _deliver(self, packet: Dict[str, Any]) -> None:
         try:
             self._on_receive_callback(packet)
         except Exception:
             logger.exception("receive callback failed")
-        return False
 
     def _resend_pending(self) -> None:
         unconfirmed = self._outbox.pending()

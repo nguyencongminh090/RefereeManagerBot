@@ -117,6 +117,17 @@ class ClientSocketTests(ServerBackedCase):
         self.assertEqual(match_id, self.acks()[0]["data"]["match_id"])
         self.assertEqual(1, len(self.server._store.list_games("Demo Tournament")))
 
+    def test_auth_ok_is_passed_on_at_every_connection(self):
+        self.start_server()
+        client = self.make_client()
+        client.connect()
+        auth_ok = lambda: [p for p in self.received if p["type"] == ResponseType.AUTH_OK.value]
+        self.assertTrue(wait_for(lambda: len(auth_ok()) == 1), "no AUTH_OK on the first connection")
+        self.stop_server()
+        self.start_server()
+        self.addCleanup(lambda: self.server and self.server.stop())
+        self.assertTrue(wait_for(lambda: len(auth_ok()) == 2), "no AUTH_OK after the reconnect")
+
     def test_rejected_result_is_not_retried_forever(self):
         self.start_server()
         self.addCleanup(lambda: self.server and self.server.stop())

@@ -3,7 +3,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from referee.commands.dispatcher   import CommandDispatcher
-from referee.driver_port           import IDriver
+from referee.driver_port           import DriverError, IDriver
 from referee.session          import MatchSession
 from domain.types           import GameResult
 from network.messages      import RequestType
@@ -21,6 +21,7 @@ START = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
 class FakeDriver(IDriver):
     def __init__(self, names=("alice", "bob")):
         self.names, self.inbox, self.said, self.left, self.table_no = names, [], [], 0, None
+        self.send_failures = 0
 
     def get_players_name(self):
         return self.names
@@ -34,6 +35,9 @@ class FakeDriver(IDriver):
         return fresh
 
     def send_message(self, text):
+        if self.send_failures:
+            self.send_failures -= 1
+            raise DriverError("page changed while writing")
         self.said.append(text)
 
     def leave_table(self):
@@ -222,6 +226,15 @@ class TestServerAuthority(SessionTestCase):
         self.build()
         self.session.process_message("+", WIN_P1)
         self.session.on_ack(ack(self.sent_id(), 12, complete=True))
+        self.assertEqual(SessionState.COMPLETED, self.session.context.state)
+        self.assertEqual(1, self.driver.left)
+
+    def test_a_page_error_while_announcing_does_not_stop_the_match_from_completing(self):
+        self.build()
+        self.session.process_message("+", WIN_P1)
+        self.driver.send_failures = 1
+        with self.assertLogs("referee.session", level="WARNING"):
+            self.session.on_ack(ack(self.sent_id(), 12, complete=True))
         self.assertEqual(SessionState.COMPLETED, self.session.context.state)
         self.assertEqual(1, self.driver.left)
 

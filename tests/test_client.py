@@ -2,7 +2,8 @@ import unittest
 from dataclasses import replace
 from unittest.mock import patch
 
-from client                 import Client, MAX_CONSECUTIVE_DRIVER_ERRORS, build_client
+from client                 import (Client, MAX_CONSECUTIVE_DRIVER_ERRORS, STARTUP_ATTEMPTS, STARTUP_RETRY_SECONDS,
+                                    build_client)
 from referee.commands.dispatcher    import CommandDispatcher
 from referee.commands.handlers      import CommandHandlers
 from referee.driver                 import SilentSeleniumDriver
@@ -16,6 +17,8 @@ from tests.test_page_parser import SETTINGS
 ADMIN = SETTINGS.tournament.admins[0]
 PLAYERS = [{"name": "wbca1", "team": "Alpha", "active": True}, {"name": "wbcb1", "team": "Beta", "active": True},
            {"name": "wbcz9", "team": "Beta", "active": False}]
+MORE_PLAYERS = [{"name": "wbca2", "team": "Alpha", "active": True}, {"name": "wbcb2", "team": "Beta", "active": True}]
+OTHER_TABLE = LobbyTable(8, "1m+1s", (Seat("wbca2", 1200), Seat("wbcb2", 1200)), joinable=False)
 TABLE = LobbyTable(7, "1m+1s", (Seat("wbca1", 1200), Seat("wbcb1", 1200)), joinable=False)
 
 
@@ -23,6 +26,7 @@ class FakeDriver(IDriver):
     def __init__(self):
         self.tables, self.joined, self.said, self.can_join = [TABLE], [], [], True
         self.failing = False
+        self.left, self.leave_failures = 0, 0
         self.invite, self.names, self.inbox = None, ("wbca1", "wbcb1"), []
 
     def lobby_tables(self): return self.tables
@@ -43,7 +47,11 @@ class FakeDriver(IDriver):
         fresh, self.inbox = self.inbox, []
         return fresh
     def send_message(self, text): self.said.append(text)
-    def leave_table(self): ...
+    def leave_table(self):
+        if self.leave_failures:
+            self.leave_failures -= 1
+            raise DriverError("page changed while leaving")
+        self.left += 1
     def open_site(self): ...
     def goto_lobby(self): ...
     def login(self, username, password): return True
@@ -104,6 +112,58 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(1, self.socket.kinds().count(RequestType.TABLE_CLAIM.value))
         self.assertEqual([], self.driver.joined)
 
+    def test_denied_claim_is_followed_at_once_by_a_claim_for_another_table(self):
+        self.build()
+        self.driver.tables = [TABLE, OTHER_TABLE]
+        self.reply(ResponseType.ROSTER_DATA, players=PLAYERS + MORE_PLAYERS)
+        self.client.step()
+        first = self.socket.packets[-1]["data"]["table_no"]
+        self.reply(ResponseType.CLAIM_DENIED, table_no=first, held_by="other")
+        self.client.step()                                    # no clock advance: no wait for the next scan
+        claims = [p["data"]["table_no"] for p in self.socket.packets
+                  if p["type"] == RequestType.TABLE_CLAIM.value]
+        self.assertEqual(2, len(claims))
+        self.assertNotEqual(claims[0], claims[1])
+
+    def claims_sent(self):
+        return [p["data"]["table_no"] for p in self.socket.packets if p["type"] == RequestType.TABLE_CLAIM.value]
+
+    def referee_a_table(self):
+        self.build(join_mode="invite")
+        self.driver.invite = ADMIN
+        self.client.step()
+        self.driver.invite = None
+
+    def test_reclaims_the_table_it_referees_when_the_connection_is_established_again(self):
+        self.referee_a_table()
+        self.reply(ResponseType.AUTH_OK)
+        self.client.step()
+        self.assertEqual([7], self.claims_sent())
+
+    def test_resends_a_claim_that_was_waiting_for_an_answer_when_the_connection_is_established_again(self):
+        self.build()
+        self.give_roster()
+        self.client.step()
+        self.reply(ResponseType.AUTH_OK)
+        self.client.step()
+        self.assertEqual([7, 7], self.claims_sent())
+
+    def test_nothing_is_claimed_when_connecting_while_idle(self):
+        self.build()
+        self.reply(ResponseType.AUTH_OK)
+        self.client.step()
+        self.assertEqual([], self.socket.packets)
+
+    def test_a_denied_reclaim_ends_the_session_without_reporting_or_releasing(self):
+        self.referee_a_table()
+        self.reply(ResponseType.CLAIM_DENIED, table_no=7, held_by="other-bot")
+        self.client.step()
+        self.assertEqual(1, self.driver.left)
+        self.driver.inbox = [("+", "player #1 wins")]
+        self.client.step()
+        self.assertNotIn(RequestType.MATCH_RESULT.value, self.socket.kinds())
+        self.assertNotIn(RequestType.TABLE_RELEASE.value, self.socket.kinds())
+
     def test_failed_join_releases_the_claim(self):
         self.build()
         self.driver.can_join = False
@@ -122,6 +182,57 @@ class ClientTests(unittest.TestCase):
         self.client.step()
         self.assertEqual(RequestType.TABLE_RELEASE.value, self.socket.packets[-1]["type"])
         self.assertEqual([], self.driver.joined)
+
+    def test_join_that_hits_a_page_error_is_retried_on_a_later_scan(self):
+        self.build()
+        self.give_roster()
+        self.client.step()
+        self.driver.failing = True
+        self.reply(ResponseType.CLAIM_OK, table_no=7)
+        self.client.step()
+        self.driver.failing = False
+        self.now += SETTINGS.client.lobby_scan_seconds
+        self.client.step()
+        self.assertEqual(2, self.socket.kinds().count(RequestType.TABLE_CLAIM.value))
+        self.reply(ResponseType.CLAIM_OK, table_no=7)
+        self.client.step()
+        self.assertEqual([7], self.driver.joined)
+
+    def test_join_refused_by_the_page_is_not_retried(self):
+        self.build()
+        self.driver.can_join = False
+        self.give_roster()
+        self.client.step()
+        self.reply(ResponseType.CLAIM_OK, table_no=7)
+        self.client.step()
+        self.now += SETTINGS.client.lobby_scan_seconds
+        self.client.step()
+        self.assertEqual(1, self.socket.kinds().count(RequestType.TABLE_CLAIM.value))
+
+    def finish_the_match(self):
+        """Plays one game and has the server declare the micro-match complete."""
+        self.build(join_mode="invite")
+        self.driver.invite = ADMIN
+        self.client.step()
+        self.driver.inbox = [("+", "player #1 wins")]
+        self.client.step()
+        match_id = self.socket.packets[-1]["meta"]["match_id"]
+        self.reply(ResponseType.MATCH_ACK, match_id=match_id, games=12, complete=True)
+
+    def test_leaves_the_table_and_releases_it_when_the_match_is_complete(self):
+        self.finish_the_match()
+        self.client.step()
+        self.assertEqual(1, self.driver.left)
+        self.assertEqual(RequestType.TABLE_RELEASE.value, self.socket.packets[-1]["type"])
+
+    def test_a_page_error_while_leaving_is_retried_before_the_table_is_released(self):
+        self.finish_the_match()
+        self.driver.leave_failures = 1
+        self.client.step()
+        self.assertNotIn(RequestType.TABLE_RELEASE.value, self.socket.kinds())
+        self.client.step()
+        self.assertEqual(1, self.driver.left)
+        self.assertEqual(RequestType.TABLE_RELEASE.value, self.socket.packets[-1]["type"])
 
     def test_a_page_error_in_a_step_is_survived(self):
         self.build("invite")
@@ -257,6 +368,67 @@ class ClientTests(unittest.TestCase):
         self.driver.inbox = [("+", "player #1 wins")]
         self.client.step()
         self.assertEqual(RequestType.MATCH_RESULT.value, self.socket.packets[-1]["type"])
+
+
+class StartupDriver(FakeDriver):
+    """A driver whose `open_site` / `goto_lobby` fail a set number of times first."""
+    def __init__(self, open_failures=0, lobby_failures=0):
+        super().__init__()
+        self.open_failures, self.lobby_failures = open_failures, lobby_failures
+        self.opened = self.entered = self.quit_calls = 0
+
+    def open_site(self):
+        self.opened += 1
+        if self.opened <= self.open_failures:
+            raise DriverError("page not ready")
+
+    def goto_lobby(self):
+        self.entered += 1
+        if self.entered <= self.lobby_failures:
+            raise DriverError("lobby not ready")
+
+    def quit(self):
+        self.quit_calls += 1
+
+
+class StartupTests(unittest.TestCase):
+    def start(self, driver):
+        secrets = replace(SETTINGS.secrets, playok_user="u", playok_pass="p", bot_token="t")
+        self.sockets = []
+        client = Client(replace(SETTINGS, secrets=secrets), driver, self.make_socket)
+        self.sleeps = []
+
+        def sleep(seconds):
+            self.sleeps.append(seconds)
+            if seconds == SETTINGS.client.poll_seconds:      # the main loop is reached: stop it
+                raise KeyboardInterrupt
+
+        with patch("client.time.sleep", sleep):
+            client.start()
+
+    def make_socket(self, on_receive):
+        self.sockets.append(FakeSocket(on_receive))
+        return self.sockets[0]
+
+    def test_open_site_is_retried_after_a_page_error(self):
+        driver = StartupDriver(open_failures=2)
+        self.start(driver)
+        self.assertEqual(3, driver.opened)
+        self.assertEqual([STARTUP_RETRY_SECONDS] * 2, self.sleeps[:2])
+        self.assertIn(RequestType.ROSTER_QUERY.value, self.sockets[0].kinds())
+
+    def test_goto_lobby_is_retried_after_a_page_error(self):
+        driver = StartupDriver(lobby_failures=2)
+        self.start(driver)
+        self.assertEqual(3, driver.entered)
+        self.assertIn(RequestType.ROSTER_QUERY.value, self.sockets[0].kinds())
+
+    def test_gives_up_after_the_last_attempt_and_closes_the_browser(self):
+        driver = StartupDriver(open_failures=STARTUP_ATTEMPTS + 1)
+        with self.assertRaises(RuntimeError):
+            self.start(driver)
+        self.assertEqual(STARTUP_ATTEMPTS, driver.opened)
+        self.assertEqual(1, driver.quit_calls)
 
 
 class BuildClientTests(unittest.TestCase):

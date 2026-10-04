@@ -317,6 +317,20 @@ class ServerTests(unittest.TestCase):
         b2.send(RequestType.TABLE_CLAIM, {"table_no": "five"})
         self.assertEqual("BAD_PACKET", b2.recv_type(ResponseType.ERROR)["data"]["code"])
 
+    def test_a_new_connection_of_the_same_bot_takes_over_its_table(self):
+        self.start()
+        old, other = self.bot("bot1"), self.bot("bot2")
+        old.send(RequestType.TABLE_CLAIM, {"table_no": 5})
+        old.recv_type(ResponseType.CLAIM_OK)
+        new = self.bot("bot1")                       # the bot reconnected; the server has not dropped the old link
+        new.send(RequestType.TABLE_CLAIM, {"table_no": 5})
+        self.assertIsNotNone(new.recv_type(ResponseType.CLAIM_OK))
+        old.close()
+        time.sleep(0.3)                              # the server notices the old link closing
+        other.send(RequestType.TABLE_CLAIM, {"table_no": 5})
+        denied = other.recv_type(ResponseType.CLAIM_DENIED)["data"]
+        self.assertEqual("bot1", denied["held_by"])
+
     # ---------------------------------------------------------- housekeeping
     def test_silent_client_is_dropped_after_missed_heartbeats(self):
         self.start(**{"heartbeat_seconds = 15": "heartbeat_seconds = 0.2"})
