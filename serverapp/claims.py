@@ -25,6 +25,14 @@ class ClaimRegistry:
         with self._lock:
             return self._owners.setdefault(table_no, addr)
 
+    def take_over(self, table_no: int, old_addr: Addr, new_addr: Addr) -> bool:
+        """Moves a table from one connection to another; False when `old_addr` is not the owner."""
+        with self._lock:
+            if self._owners.get(table_no) != old_addr:
+                return False
+            self._owners[table_no] = new_addr
+            return True
+
     def release(self, table_no: int, addr: Addr) -> bool:
         """Releases a table; returns False when `addr` does not own it."""
         with self._lock:

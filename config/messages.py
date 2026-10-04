@@ -17,6 +17,8 @@ TEMPLATE_FIELDS = {
     "cheer_usage"     : (),
     "seats_unreadable": (),
     "set_failed"      : ("reason",),
+    "sync_usage"      : (),
+    "sync_failed"     : ("reason",),
     "result_pair"     : ("p1", "p2", "s1", "s2"),
     "result_team"     : ("team1", "team2", "t1", "t2"),
     "last_game"       : (),
@@ -41,6 +43,8 @@ class MessageTexts:
         cheer_usage: Reply to a malformed !cheer.
         seats_unreadable: Reply when a command needs the seat names and they cannot be read.
         set_failed: Reply when the server refused !set; uses {reason}.
+        sync_usage: Reply to `!sync` without a usable round start.
+        sync_failed: Reply when `!sync` found no usable games or the page failed; uses {reason}.
         result_pair: Score line of a pair; uses {p1}, {p2}, {s1} and {s2}.
         result_team: Score line of the two teams; uses {team1}, {team2}, {t1} and {t2}.
         last_game: Written one game before the match ends.
@@ -57,6 +61,8 @@ class MessageTexts:
     cheer_usage     : str
     seats_unreadable: str
     set_failed      : str
+    sync_usage      : str
+    sync_failed     : str
     result_pair     : str
     result_team     : str
     last_game       : str

@@ -36,6 +36,20 @@ class ClaimRegistryTests(unittest.TestCase):
         self.assertIsNone(claims.owner(5))
         self.assertFalse(claims.release(5, A))
 
+    def test_take_over_moves_the_claim_from_the_old_address_to_the_new_one(self):
+        claims = ClaimRegistry()
+        claims.claim(5, A)
+        self.assertTrue(claims.take_over(5, A, B))
+        self.assertEqual(B, claims.owner(5))
+        claims.release_all_for(A)                       # the old connection closing later changes nothing
+        self.assertEqual(B, claims.owner(5))
+
+    def test_take_over_fails_when_the_old_address_does_not_own_the_table(self):
+        claims = ClaimRegistry()
+        claims.claim(5, B)
+        self.assertFalse(claims.take_over(5, A, ("10.0.0.3", 3333)))
+        self.assertEqual(B, claims.owner(5))
+
     def test_release_all_for_one_address(self):
         claims = ClaimRegistry()
         claims.claim(1, A)

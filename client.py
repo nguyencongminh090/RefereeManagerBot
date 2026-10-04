@@ -14,10 +14,12 @@ from network.ports         import IClientSocket
 from referee.browser       import create_firefox
 from referee.commands.dispatcher import CommandDispatcher
 from referee.commands.handlers   import CommandHandlers
+from referee.commands.sync       import SyncCommand
 from referee.driver        import SeleniumDriver, SilentSeleniumDriver
 from referee.driver_port   import DriverError, IDriver
 from referee.lobby         import LobbyWatcher
 from referee.session       import MatchSession, SessionState
+from referee.stats_source  import HttpStatsSource
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,9 @@ JOIN_INVITE   = "invite"
 BOT_NAME_BASE = "referee-bot"
 # consecutive main-loop passes that may fail on the page before the bot gives up (about 15 s)
 MAX_CONSECUTIVE_DRIVER_ERRORS = 30
+# attempts, and seconds between them, for opening PlayOK and entering the lobby at start-up
+STARTUP_ATTEMPTS      = 5
+STARTUP_RETRY_SECONDS = 3.0
 
 
 class Client:
@@ -55,6 +60,7 @@ class Client:
         self._next_scan  = 0.0
         self._driver_errors = 0                              # failed passes in a row
         CommandHandlers(settings).register_on(self._dispatcher)
+        SyncCommand(settings, HttpStatsSource(settings.stats)).register_on(self._dispatcher)
 
     def start(self) -> None:
         """Connects, logs in and referees until interrupted.
@@ -66,10 +72,10 @@ class Client:
         secrets = self._settings.secrets
         try:
             self._socket.connect()
-            self._driver.open_site()
+            self._retry_on_page_error(self._driver.open_site, "open PlayOK")
             if not self._driver.login(secrets.playok_user, secrets.playok_pass):
                 raise RuntimeError("PlayOK login failed: login form not found")
-            self._driver.goto_lobby()
+            self._retry_on_page_error(self._driver.goto_lobby, "enter the lobby")
             self._socket.send_packet({"type": RequestType.ROSTER_QUERY.value, "data": {}})
             while True:
                 self.step()
@@ -78,6 +84,23 @@ class Client:
             pass
         finally:
             self.stop()
+
+    def _retry_on_page_error(self, action: Callable[[], None], what: str) -> None:
+        """Runs a start-up page action, retrying page errors up to STARTUP_ATTEMPTS times.
+
+        Raises:
+            RuntimeError: If every attempt fails on the page.
+        """
+        for attempt in range(1, STARTUP_ATTEMPTS + 1):
+            try:
+                action()
+                return
+            except DriverError as error:
+                if attempt == STARTUP_ATTEMPTS:
+                    raise RuntimeError(f"could not {what} after {attempt} attempts: {error}") from error
+                logger.warning("could not %s (attempt %d of %d): %s", what, attempt,
+                               STARTUP_ATTEMPTS, error)
+                time.sleep(STARTUP_RETRY_SECONDS)
 
     def stop(self) -> None:
         """Releases the table, disconnects from the server and closes the browser."""
@@ -125,6 +148,7 @@ class Client:
 
     def _on_server_message(self, packet: Dict[str, Any]) -> None:
         handlers = {
+            ResponseType.AUTH_OK.value     : self._on_connected,
             ResponseType.SCORE_DATA.value  : self._on_standings_text,
             ResponseType.BROADCAST.value   : self._on_standings_text,
             ResponseType.ROSTER_DATA.value : self._on_roster_data,
@@ -137,6 +161,15 @@ class Client:
         handler = handlers.get(packet.get("type"))
         if handler is not None:
             handler(packet)
+
+    def _on_connected(self, packet: Dict[str, Any]) -> None:
+        """Re-asserts the claims after every (re)connection: the server forgets them when a link closes.
+
+        The claim is idempotent for its owner, so asking again is always safe.
+        """
+        for table_no in {self._table, self._claiming} - {None}:
+            self._socket.send_packet({"type": RequestType.TABLE_CLAIM.value,
+                                      "data": {"table_no": table_no}})
 
     def _on_standings_text(self, packet: Dict[str, Any]) -> None:
         if self._session is not None:
@@ -176,26 +209,35 @@ class Client:
         if table_no != self._claiming or self._session is not None:
             return
         self._claiming = None
-        if self._try_join(table_no):
-            self._start_session(table_no)
-        else:
-            logger.warning("could not join table %s", table_no)
-            self._lobby.skip(table_no)
-            self._send_table_release(table_no)
-
-    def _try_join(self, table_no: int) -> bool:
-        """Joins the table; a page error counts as a failed join so that the claim is released."""
         try:
-            return self._driver.join_table(table_no)
+            joined = self._driver.join_table(table_no)
         except DriverError as error:
-            logger.warning("join of table %s failed on the page: %s", table_no, error)
-            return False
+            # a page glitch says nothing about the table: release it and let a later scan retry
+            logger.warning("join of table %s failed on the page, will retry: %s", table_no, error)
+            self._send_table_release(table_no)
+            return
+        if joined:
+            self._start_session(table_no)
+            return
+        logger.warning("could not join table %s", table_no)
+        self._lobby.skip(table_no)
+        self._send_table_release(table_no)
 
     def _on_claim_denied(self, table_no: Optional[int]) -> None:
         if table_no == self._claiming:
             self._claiming = None
+            self._next_scan = 0.0           # another bot was faster: look for a different table now
         if table_no is not None:
             self._lobby.skip(table_no)
+        if table_no is not None and table_no == self._table:
+            self._abandon_table()
+
+    def _abandon_table(self) -> None:
+        """Leaves a table another bot now holds, so that its games are not reported twice."""
+        logger.warning("table %s is held by another bot now; leaving it", self._table)
+        self._table = None                   # not ours any more: there is nothing to release
+        if self._session is not None:
+            self._session.leave()
 
     # ------------------------------------------------------------- finding tables
     def _look_for_table(self) -> None:
@@ -234,6 +276,8 @@ class Client:
             self._finish_session()
 
     def _finish_session(self) -> None:
+        if self._session is not None:
+            self._session.ensure_left()      # a page error here is retried on the next pass
         self._release_table()
         self._session = None
 

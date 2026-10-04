@@ -14,6 +14,8 @@ passed a first live trial on 2026-10-04 (results in `README.md`, Status). `READM
 python3 -m unittest discover -s tests -t .                        # all tests (no selenium needed)
 python3 -m unittest tests.test_server                             # one module
 python3 -m unittest tests.test_server.SomeClass.test_name         # one test
+# browser tests against the fake PlayOK site (tests/fake_playok/): need selenium + Firefox, else skipped
+FIREFOX_BINARY=/snap/firefox/current/usr/lib/firefox/firefox .venv/bin/python -m unittest tests.test_fake_playok_browser tests.test_fake_playok_match
 python3 server.py [--config config/config.toml] [--env .env]      # server
 python3 client.py [--headless] [--no-chat]                                  # referee bot (needs selenium, Firefox + geckodriver)
 python3 -m tools.admin_db --db data/tournament.db <group> -h      # admin CLI (run from repo root)

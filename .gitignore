@@ -40,10 +40,8 @@ data/*.db-wal
 data/*.db-shm
 
 # Saved real PlayOK pages and organiser files: contain real names and chat, never commit
-Gomoku.html
-Gomoku2.txt
-web.txt
-lobby.txt
+tests/fixtures/playok/*
+!tests/fixtures/playok/README.md
 TGWBC2026-ENG.pdf
 data/outbox.jsonl
 data/*.bak
@@ -52,4 +50,3 @@ data/*.tmp
 # Rosters and local config
 data/*.csv
 config/config.toml
-test.txt

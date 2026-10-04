@@ -9,6 +9,7 @@ from referee.page_parser import (ChatLine, GameOutcome, LobbyTable, PageParser, 
 from domain.types      import GameResult
 
 ROOT    = Path(__file__).resolve().parent.parent
+FIXTURES = ROOT / "tests" / "fixtures" / "playok"
 SETTINGS = ConfigLoader.load(str(ROOT / "config" / "config.example.toml"), env_file="/nonexistent", environ={})
 PARSER  = PageParser(SETTINGS.playok)
 
@@ -160,17 +161,21 @@ class LobbyTests(unittest.TestCase):
         self.assertEqual([], eligible_tables(tables, {"carol": "Red", "alice": "Blue", "bob": "Blue"}))   # carol's table has one seat
 
 
-@unittest.skipUnless((ROOT / "Gomoku2.txt").exists() and (ROOT / "web.txt").exists() and (ROOT / "Gomoku.html").exists(),
-                     "saved PlayOK pages not present")
+FINISHED_TABLE, LIVE_TABLE = "table_finished_games.html", "table_live_game.html"
+LOBBY_WITH_INVITATION, LOBBY_PRIVATE = "lobby_with_invitation.html", "lobby_private_messages.html"
+
+
+@unittest.skipUnless(all((FIXTURES / name).exists() for name in (FINISHED_TABLE, LIVE_TABLE, LOBBY_WITH_INVITATION)),
+                     "saved PlayOK pages not present (tests/fixtures/playok/)")
 class SavedPageTests(unittest.TestCase):
     """Structure only (counts and shapes), so no personal data is asserted. The pages are not in git."""
 
     @staticmethod
     def load(name):
-        return PARSER.parse((ROOT / name).read_text(encoding="utf-8"))
+        return PARSER.parse((FIXTURES / name).read_text(encoding="utf-8"))
 
     def test_gomoku2_chat_and_results(self):
-        dom = self.load("Gomoku2.txt")
+        dom = self.load(FINISHED_TABLE)
         lines = PARSER.chat_lines(dom)
         self.assertEqual(227, len(lines))                  # 274 `.tind` in all: 46 are private messages, 1 lobby
         tracker = PARSER.result_tracker()
@@ -182,15 +187,15 @@ class SavedPageTests(unittest.TestCase):
         self.assertEqual((None, None), PARSER.seat_names(dom))          # saved after the games ended
 
     def test_web_page_is_a_live_game(self):
-        dom = self.load("web.txt")
+        dom = self.load(LIVE_TABLE)
         self.assertEqual(2, len(PARSER.chat_lines(dom)))                 # 57 `.tind` in all: 54 private messages, 1 lobby
         first, second = PARSER.seat_names(dom)
         self.assertTrue(first and second and first != second)
         self.assertEqual((106, 3), (PARSER.table_info(dom).number, PARSER.table_info(dom).base_minutes))
 
     def test_private_messages_and_lobby_chat_are_never_table_chat(self):
-        for name, private in (("Gomoku2.txt", 46), ("web.txt", 54), ("lobby.txt", 54)):
-            if not (ROOT / name).exists():
+        for name, private in ((FINISHED_TABLE, 46), (LIVE_TABLE, 54), (LOBBY_PRIVATE, 54)):
+            if not (FIXTURES / name).exists():
                 continue
             dom = self.load(name)
             every = len(dom.select(".tind"))
@@ -198,7 +203,7 @@ class SavedPageTests(unittest.TestCase):
             self.assertEqual(every, len(PARSER.chat_lines(dom)) + private + len(dom.select(".chpan .tind")))
 
     def test_gomoku_html_lobby_and_invitation(self):
-        dom = self.load("Gomoku.html")
+        dom = self.load(LOBBY_WITH_INVITATION)
         self.assertEqual(9, len(PARSER.chat_lines(dom)))                 # 10 `.tind` in all: 1 is the lobby line
         tables = PARSER.lobby_tables(dom)
         self.assertGreater(len(tables), 10)

@@ -349,11 +349,18 @@ class Server(IScoreObserver):
         if table_no is None:
             return
         owner = self._claims.claim(table_no, addr)
+        if owner != addr and self._is_same_bot(owner, addr):
+            # the bot reconnected before the server dropped its old link: the table stays with the bot
+            owner = addr if self._claims.take_over(table_no, owner, addr) else owner
         if owner == addr:
             self._reply(addr, ResponseType.CLAIM_OK, table_no=table_no)
         else:
             self._reply(addr, ResponseType.CLAIM_DENIED, table_no=table_no,
                         held_by=self._sessions.name_of(owner))
+
+    def _is_same_bot(self, first: Addr, second: Addr) -> bool:
+        name = self._sessions.name_of(first)
+        return name is not None and name == self._sessions.name_of(second)
 
     def _on_table_release(self, addr: Addr, packet: Dict[str, Any]) -> None:
         table_no = self._table_no(addr, packet)

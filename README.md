@@ -35,7 +35,7 @@ referee bot ...                              --TCP-->
 
 The prefix is `[commands] prefix` (default `!`). Commands listed in `[commands] admin_only` work only for the
 nicknames in `[tournament] admins` (several are allowed, case is ignored); everyone else is ignored silently.
-Admin-only: `leave`, `rules`, `set`, `break`.
+Admin-only: `leave`, `rules`, `set`, `break`, `sync`.
 
 | Command | Who | What it does |
 |---|---|---|
@@ -43,6 +43,8 @@ Admin-only: `leave`, `rules`, `set`, `break`.
 | `!cheer 1` / `!cheer 2` | everyone | Cheers the player in that seat with a random sentence from `cheers`. One per `cheer_cooldown_seconds` per table. |
 | `!rules [language]` | admin | Writes the rules reminder: in the tournament language, or in another one (a language name or alias such as `eng`). An unknown language is answered with the configured ones. |
 | `!set L-R` | admin | Corrects the pair's score after a bot restart or a lost count: `L` = points of the player in the left seat (#1) now, `R` = right seat (#2). Points are game points, a draw is half (`!set 2.5-1.5`). |
+| `!sync total` | admin | Like `!sync`, but takes the all-time record of the two players from the opponents tab (no round start, no time zone). Right only when they never played each other before this match. |
+| `!sync [[date] time]` | admin | Typed at a table, it does what `!set L-R` does but finds the score itself: counts the games of the two seated players on PlayOK's games list (`[stats]`) since midnight today (a WBC match is played in one day), or since the time given (`!sync 18:30`, `!sync 2026-10-04 18:30`), or since `tournament.round_start`, and sends the result as `!set` does. Nothing changes when no game, or more than `total_matches`, are found. |
 | `!break [minutes]` | admin | Announces a break and the time to come back. Default length `tournament.break_minutes`, at most `commands.break_max_minutes`. |
 | `!leave` | admin | The bot says goodbye and leaves the table. |
 
@@ -53,6 +55,12 @@ and every game is audit-logged under the admin's nickname. Setting the same scor
 event updates the team score by itself, because team totals are derived from the games. The server refuses (and the
 bot says why in the chat) when the sender is not an admin, when more games than `total_matches` would be needed, or
 when no mix of wins and draws gives the score.
+
+**`!sync` in detail.** It fetches `stat.phtml?u=<left>&g=gm&sk=2&oid=<right>` (one request, `stats.timeout_seconds`, no retry; a
+failure is written in the chat and the admin tries again). Game times on that page are read in `stats.timezone`; the live page
+showed a time one hour before the game record, so check the zone once against a known game before relying on it. `round_start`
+and the command's time are in `tournament.timezone`. Only the newest page of the list is read, so keep `total_matches` below the
+page length (about 15 games). A rematch of the same pair in a later round needs a later start. `!sync total` reads `stat.phtml?u=<left>&g=gm&sk=3&sid=<right>`, whose opponents table has the row of `<right>` as `wins-losses-draws` of the left player, and is refused above `total_matches` games.
 
 **After every new result** the bot writes the score: in a team event `Alpha : Beta = 7 : 5` and then the pair line
 `alice : bob = 3-2`; in an individual event only the pair line. Then, when it applies, one info text: `final`
@@ -125,7 +133,28 @@ Every change is recorded in the audit log (`--actor`). `python3 -m tools.seed_de
 python3 -m unittest discover -s tests -t .
 ```
 
-Tests that use saved PlayOK pages in the repo root are skipped when those files are absent. Selenium is not needed.
+Tests that use saved PlayOK pages (`tests/fixtures/playok/`, git-ignored, see the README there) are skipped when those files are absent. Selenium is not needed.
+
+**Fake PlayOK site (`tests/fake_playok/`).** A small local web server that imitates the lobby and table pages (markup shaped
+like the saved pages, anonymised content) so that the real `SeleniumDriver`, `Client`, TCP socket, server and SQLite can run
+together without a tournament. The tests parse the fake pages with the production `PageParser` and the selectors of
+`config.example.toml`, so a selector change fails them too. They need selenium, Firefox and geckodriver and are skipped
+otherwise:
+
+```
+FIREFOX_BINARY=/snap/firefox/current/usr/lib/firefox/firefox \
+  .venv/bin/python -m unittest tests.test_fake_playok tests.test_fake_playok_browser tests.test_fake_playok_match
+```
+
+(`FIREFOX_BINARY` is only needed when `firefox` is a snap wrapper; about 70 s for the browser tests.) `test_fake_playok` needs
+no browser. Scenarios: driver actions, a whole 12-game micro-match, two bots on two tables, a slow site, a page that rebuilds
+its elements on every poll (stale elements), a player leaving mid-match, admin and non-admin `!set`, server restart with outbox
+replay, and a second bot trying to take a table across a restart. Test code controls the site through `FakeWorld` (one bot's
+view: seat, invitation, `latency_sec`, `churn`) on a shared `FakeBoard` (tables and chat).
+
+The fake is only as accurate as the saved pages and our reading of them. It does not reproduce PlayOK's real timing, hidden
+elements, login form, cookie banner or anti-bot checks; the live trial remains the ground truth, and when the live site
+differs the fake should be corrected and a test added.
 
 ## Layout
 
@@ -138,7 +167,7 @@ storage/   schema.sql, database.py, tournament_store.py, sqlite_repository.py, p
 referee/   html_dom.py, page_parser.py, lobby.py, driver.py, driver_port.py, browser.py, session.py, info_text.py, commands/
 serverapp/ claims.py, sessions.py, router.py, backup.py, match_request.py (MATCH_RESULT and SET_SCORE packets)
 tools/     admin_db.py, seed_demo.py
-tests/
+tests/     fake_playok/ (fake site for browser tests), test_*.py
 data/      *.db is git-ignored
 ```
 
@@ -154,9 +183,14 @@ storage and standings all worked; 4 games were recorded and the referee confirme
 afterwards: the `>>` join button is hidden by the page on a full table, so the bot clicks the lobby row instead;
 a page error no longer kills the bot (`DriverError`, retried, stops after 30 failed passes in a row).
 
-Not yet run on the live site: invite mode, every `!` command and the result lines with chat enabled (the trial ran with
-`--no-chat`), `!set` after a reconnect, reconnect and outbox re-send after a
-server restart, `--headless`, the `draw` line pattern, table-rule warnings. Expect to adjust selectors and patterns
+After the trial, tested against the fake PlayOK site (see Tests): a join that fails on a page error is retried on a later
+scan (the table is no longer skipped); start-up (`open_site`, `goto_lobby`) retries 5 times, 3 s apart; the bot picks a
+random eligible table and rescans at once after a denied claim; a page error while leaving or while writing the score lines
+no longer leaves the bot at the table; after every (re)connection the bot re-sends its table claim (the server forgets the
+claims of a closed link), and a new link of the same bot name takes over its table.
+
+Not yet run on the live site (reconnect and outbox re-send after a server restart are only tested against the fake site): invite mode, every `!` command and the result lines with chat enabled (the trial ran with
+`--no-chat`), `!set` after a reconnect, `--headless`, the `draw` line pattern, table-rule warnings. Expect to adjust selectors and patterns
 in `config.toml` if PlayOK changes its page.
 
 Design notes: `proposal.md` (Vietnamese), `text-processing.md`.
