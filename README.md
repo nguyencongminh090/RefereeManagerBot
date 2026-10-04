@@ -125,7 +125,28 @@ Every change is recorded in the audit log (`--actor`). `python3 -m tools.seed_de
 python3 -m unittest discover -s tests -t .
 ```
 
-Tests that use saved PlayOK pages in the repo root are skipped when those files are absent. Selenium is not needed.
+Tests that use saved PlayOK pages (`tests/fixtures/playok/`, git-ignored, see the README there) are skipped when those files are absent. Selenium is not needed.
+
+**Fake PlayOK site (`tests/fake_playok/`).** A small local web server that imitates the lobby and table pages (markup shaped
+like the saved pages, anonymised content) so that the real `SeleniumDriver`, `Client`, TCP socket, server and SQLite can run
+together without a tournament. The tests parse the fake pages with the production `PageParser` and the selectors of
+`config.example.toml`, so a selector change fails them too. They need selenium, Firefox and geckodriver and are skipped
+otherwise:
+
+```
+FIREFOX_BINARY=/snap/firefox/current/usr/lib/firefox/firefox \
+  .venv/bin/python -m unittest tests.test_fake_playok tests.test_fake_playok_browser tests.test_fake_playok_match
+```
+
+(`FIREFOX_BINARY` is only needed when `firefox` is a snap wrapper; about 70 s for the browser tests.) `test_fake_playok` needs
+no browser. Scenarios: driver actions, a whole 12-game micro-match, two bots on two tables, a slow site, a page that rebuilds
+its elements on every poll (stale elements), a player leaving mid-match, admin and non-admin `!set`, server restart with outbox
+replay, and a second bot trying to take a table across a restart. Test code controls the site through `FakeWorld` (one bot's
+view: seat, invitation, `latency_sec`, `churn`) on a shared `FakeBoard` (tables and chat).
+
+The fake is only as accurate as the saved pages and our reading of them. It does not reproduce PlayOK's real timing, hidden
+elements, login form, cookie banner or anti-bot checks; the live trial remains the ground truth, and when the live site
+differs the fake should be corrected and a test added.
 
 ## Layout
 
@@ -138,7 +159,7 @@ storage/   schema.sql, database.py, tournament_store.py, sqlite_repository.py, p
 referee/   html_dom.py, page_parser.py, lobby.py, driver.py, driver_port.py, browser.py, session.py, info_text.py, commands/
 serverapp/ claims.py, sessions.py, router.py, backup.py, match_request.py (MATCH_RESULT and SET_SCORE packets)
 tools/     admin_db.py, seed_demo.py
-tests/
+tests/     fake_playok/ (fake site for browser tests), test_*.py
 data/      *.db is git-ignored
 ```
 
@@ -154,9 +175,14 @@ storage and standings all worked; 4 games were recorded and the referee confirme
 afterwards: the `>>` join button is hidden by the page on a full table, so the bot clicks the lobby row instead;
 a page error no longer kills the bot (`DriverError`, retried, stops after 30 failed passes in a row).
 
-Not yet run on the live site: invite mode, every `!` command and the result lines with chat enabled (the trial ran with
-`--no-chat`), `!set` after a reconnect, reconnect and outbox re-send after a
-server restart, `--headless`, the `draw` line pattern, table-rule warnings. Expect to adjust selectors and patterns
+After the trial, tested against the fake PlayOK site (see Tests): a join that fails on a page error is retried on a later
+scan (the table is no longer skipped); start-up (`open_site`, `goto_lobby`) retries 5 times, 3 s apart; the bot picks a
+random eligible table and rescans at once after a denied claim; a page error while leaving or while writing the score lines
+no longer leaves the bot at the table; after every (re)connection the bot re-sends its table claim (the server forgets the
+claims of a closed link), and a new link of the same bot name takes over its table.
+
+Not yet run on the live site (reconnect and outbox re-send after a server restart are only tested against the fake site): invite mode, every `!` command and the result lines with chat enabled (the trial ran with
+`--no-chat`), `!set` after a reconnect, `--headless`, the `draw` line pattern, table-rule warnings. Expect to adjust selectors and patterns
 in `config.toml` if PlayOK changes its page.
 
 Design notes: `proposal.md` (Vietnamese), `text-processing.md`.
