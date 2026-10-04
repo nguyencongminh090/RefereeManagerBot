@@ -40,6 +40,34 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual("Europe/Warsaw", str(s.tournament.tzinfo))
         self.assertEqual("Replace with the rules reminder in English.", s.texts.rules)
 
+    def test_stats_table_is_typed(self):
+        s = self.load()
+        self.assertEqual(("https://www.playok.com/en/stat.phtml", "gm", "UTC", 5.0),
+                         (s.stats.url, s.stats.game_code, s.stats.timezone, s.stats.timeout_seconds))
+        self.assertEqual("UTC", str(s.stats.tzinfo))
+
+    def test_stats_keys_are_validated(self):
+        self.text = (self.text.replace('timezone        = "UTC"', 'timezone        = "Mars/Base"')
+                              .replace("\ntimeout_seconds = 5", "\ntimeout_seconds = 0"))
+        found = self.problems()
+        self.assertTrue(any("stats.timezone" in p for p in found), found)
+        self.assertTrue(any("stats.timeout_seconds" in p for p in found), found)
+
+    def test_round_start_is_optional_and_read_in_the_tournament_zone(self):
+        self.assertIsNone(self.load().tournament.round_start)
+        self.text = self.text.replace('year            = 2027', 'round_start    = "2026-10-04 18:00"\nyear            = 2027')
+        start = self.load().tournament.round_start
+        self.assertEqual("2026-10-04T18:00:00+02:00", start.isoformat())
+
+    def test_a_malformed_round_start_stops_start_up(self):
+        self.text = self.text.replace('year            = 2027', 'round_start    = "tonight"\nyear            = 2027')
+        self.assertTrue(any("tournament.round_start" in p for p in self.problems()))
+
+    def test_every_language_has_the_sync_texts(self):
+        s = self.load()
+        self.assertIn("{reason}", s.texts.sync_failed)
+        self.assertTrue(s.texts.sync_usage)
+
     def test_hardening_keys_are_typed(self):
         s = self.load()
         self.assertEqual((1048576, 64, 5.0, 5.0, 5, 60.0),

@@ -14,10 +14,12 @@ from network.ports         import IClientSocket
 from referee.browser       import create_firefox
 from referee.commands.dispatcher import CommandDispatcher
 from referee.commands.handlers   import CommandHandlers
+from referee.commands.sync       import SyncCommand
 from referee.driver        import SeleniumDriver, SilentSeleniumDriver
 from referee.driver_port   import DriverError, IDriver
 from referee.lobby         import LobbyWatcher
 from referee.session       import MatchSession, SessionState
+from referee.stats_source  import HttpStatsSource
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,7 @@ class Client:
         self._next_scan  = 0.0
         self._driver_errors = 0                              # failed passes in a row
         CommandHandlers(settings).register_on(self._dispatcher)
+        SyncCommand(settings, HttpStatsSource(settings.stats)).register_on(self._dispatcher)
 
     def start(self) -> None:
         """Connects, logs in and referees until interrupted.

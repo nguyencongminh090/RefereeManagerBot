@@ -14,6 +14,7 @@ import os
 import re
 import tomllib
 from dataclasses import dataclass, field
+from datetime    import datetime
 from pathlib     import Path
 from typing      import Dict, List, Mapping, Optional, Pattern, Tuple
 from zoneinfo    import ZoneInfo, ZoneInfoNotFoundError
@@ -26,6 +27,7 @@ from domain.types import Scoring
 DEFAULT_CONFIG_PATH = "config/config.toml"
 CONFIG_ENV_VAR      = "REFEREE_CONFIG"
 DEFAULT_ENV_FILE    = ".env"
+ROUND_START_FORMAT  = "%Y-%m-%d %H:%M"
 
 JOIN_MODES   = ("auto", "invite")
 FORMATS      = ("team", "individual")
@@ -156,6 +158,7 @@ class TournamentConfig:
         team_size: Players per team; None for individual events.
         max_substitutes: Substitutes per team; None for individual events.
         no_show_minutes: Minutes after which an absent player forfeits.
+        round_start: Start of the current round, in the tournament zone, or None; `!sync` counts games from it.
         scoring: Points and tie-breaks.
         table_rules: Expected table settings.
     """
@@ -171,6 +174,7 @@ class TournamentConfig:
     team_size      : Optional[int]
     max_substitutes: Optional[int]
     no_show_minutes: float
+    round_start    : Optional[datetime]
     scoring        : MatchScoring
     table_rules    : TableRules
 
@@ -221,6 +225,27 @@ class PlayOkConfig:
 
 
 @dataclass(frozen=True)
+class StatsConfig:
+    """The `[stats]` table: PlayOK's public statistics pages, read by `!sync`.
+
+    Attributes:
+        url: Address of the statistics page.
+        game_code: PlayOK's code of the game in the page address (`gm` for gomoku).
+        timezone: IANA zone the page writes its dates in.
+        timeout_seconds: Seconds a request may take.
+    """
+    url            : str
+    game_code      : str
+    timezone       : str
+    timeout_seconds: float
+
+    @property
+    def tzinfo(self) -> ZoneInfo:
+        """The zone of the page dates as a ZoneInfo."""
+        return ZoneInfo(self.timezone)
+
+
+@dataclass(frozen=True)
 class Secrets:
     """Values from `.env` / environment. Hidden from repr so they never reach a log by accident."""
     playok_user: Optional[str] = field(default=None, repr=False)
@@ -239,6 +264,7 @@ class Settings:
         tournament: `[tournament]` table.
         commands: `[commands]` table.
         playok: `[playok]` table.
+        stats: `[stats]` table.
         messages: `[messages]` table.
         secrets: Values from `.env` or the environment.
         source: Path of the config file read.
@@ -249,6 +275,7 @@ class Settings:
     tournament: TournamentConfig
     commands  : CommandsConfig
     playok    : PlayOkConfig
+    stats     : StatsConfig
     messages  : MessagesConfig
     secrets   : Secrets
     source    : str
@@ -348,6 +375,7 @@ class ConfigLoader:
         commands.finish()
 
         playok_cfg = ConfigLoader._playok(root.table("playok"), problems)
+        stats_cfg = ConfigLoader._stats(root.table("stats"), problems)
         messages_cfg = load_messages(root.table("messages"), tournament_cfg.language, problems)
         root.finish()
 
@@ -363,7 +391,7 @@ class ConfigLoader:
                           merged.get("BOT_TOKEN"))
 
         return Settings(server_cfg, db_cfg, client_cfg, tournament_cfg, commands_cfg, playok_cfg,
-                        messages_cfg, secrets, source)
+                        stats_cfg, messages_cfg, secrets, source)
 
     @staticmethod
     def _tournament(t: Section, problems: List[str]) -> TournamentConfig:
@@ -388,6 +416,7 @@ class ConfigLoader:
         team_size = t.integer("team_size", 1, required=team)
         max_subs  = t.integer("max_substitutes", 0, required=team)
         no_show   = t.number("no_show_minutes", 0)
+        round_start = ConfigLoader._round_start(t, tz, problems)
 
         sc = t.table("scoring")
         scoring = MatchScoring(
@@ -407,7 +436,33 @@ class ConfigLoader:
         tr.finish()
         t.finish()
         return TournamentConfig(name, fmt, year, total, brk_after, brk_min, tz, language, admins,
-                                team_size, max_subs, no_show, scoring, rules)
+                                team_size, max_subs, no_show, round_start, scoring, rules)
+
+    @staticmethod
+    def _round_start(t: Section, zone_name: str, problems: List[str]) -> Optional[datetime]:
+        text = t.optional_text("round_start")
+        if text is None:
+            return None
+        try:
+            return datetime.strptime(text, ROUND_START_FORMAT).replace(tzinfo=ZoneInfo(zone_name))
+        except ValueError:
+            problems.append(f"'tournament.round_start' must look like '2026-10-04 18:00', got {text!r}")
+        except (ZoneInfoNotFoundError, KeyError):
+            pass                                      # the time zone problem is already recorded
+        return None
+
+    @staticmethod
+    def _stats(st: Section, problems: List[str]) -> StatsConfig:
+        url, code = st.text("url"), st.text("game_code")
+        zone = st.text("timezone")
+        if zone:
+            try:
+                ZoneInfo(zone)
+            except (ZoneInfoNotFoundError, ValueError):
+                problems.append(f"'stats.timezone' is not a known time zone: {zone!r}")
+        timeout = st.number("timeout_seconds", 0, True)
+        st.finish()
+        return StatsConfig(url, code, zone, timeout)
 
     @staticmethod
     def _playok(p: Section, problems: List[str]) -> PlayOkConfig:

@@ -35,7 +35,7 @@ referee bot ...                              --TCP-->
 
 The prefix is `[commands] prefix` (default `!`). Commands listed in `[commands] admin_only` work only for the
 nicknames in `[tournament] admins` (several are allowed, case is ignored); everyone else is ignored silently.
-Admin-only: `leave`, `rules`, `set`, `break`.
+Admin-only: `leave`, `rules`, `set`, `break`, `sync`.
 
 | Command | Who | What it does |
 |---|---|---|
@@ -43,6 +43,8 @@ Admin-only: `leave`, `rules`, `set`, `break`.
 | `!cheer 1` / `!cheer 2` | everyone | Cheers the player in that seat with a random sentence from `cheers`. One per `cheer_cooldown_seconds` per table. |
 | `!rules [language]` | admin | Writes the rules reminder: in the tournament language, or in another one (a language name or alias such as `eng`). An unknown language is answered with the configured ones. |
 | `!set L-R` | admin | Corrects the pair's score after a bot restart or a lost count: `L` = points of the player in the left seat (#1) now, `R` = right seat (#2). Points are game points, a draw is half (`!set 2.5-1.5`). |
+| `!sync total` | admin | Like `!sync`, but takes the all-time record of the two players from the opponents tab (no round start, no time zone). Right only when they never played each other before this match. |
+| `!sync [[date] time]` | admin | Typed at a table, it does what `!set L-R` does but finds the score itself: counts the games of the two seated players on PlayOK's games list (`[stats]`) since midnight today (a WBC match is played in one day), or since the time given (`!sync 18:30`, `!sync 2026-10-04 18:30`), or since `tournament.round_start`, and sends the result as `!set` does. Nothing changes when no game, or more than `total_matches`, are found. |
 | `!break [minutes]` | admin | Announces a break and the time to come back. Default length `tournament.break_minutes`, at most `commands.break_max_minutes`. |
 | `!leave` | admin | The bot says goodbye and leaves the table. |
 
@@ -53,6 +55,12 @@ and every game is audit-logged under the admin's nickname. Setting the same scor
 event updates the team score by itself, because team totals are derived from the games. The server refuses (and the
 bot says why in the chat) when the sender is not an admin, when more games than `total_matches` would be needed, or
 when no mix of wins and draws gives the score.
+
+**`!sync` in detail.** It fetches `stat.phtml?u=<left>&g=gm&sk=2&oid=<right>` (one request, `stats.timeout_seconds`, no retry; a
+failure is written in the chat and the admin tries again). Game times on that page are read in `stats.timezone`; the live page
+showed a time one hour before the game record, so check the zone once against a known game before relying on it. `round_start`
+and the command's time are in `tournament.timezone`. Only the newest page of the list is read, so keep `total_matches` below the
+page length (about 15 games). A rematch of the same pair in a later round needs a later start. `!sync total` reads `stat.phtml?u=<left>&g=gm&sk=3&sid=<right>`, whose opponents table has the row of `<right>` as `wins-losses-draws` of the left player, and is refused above `total_matches` games.
 
 **After every new result** the bot writes the score: in a team event `Alpha : Beta = 7 : 5` and then the pair line
 `alice : bob = 3-2`; in an individual event only the pair line. Then, when it applies, one info text: `final`
