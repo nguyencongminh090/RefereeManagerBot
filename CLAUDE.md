@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Referee bots for PlayOK Gomoku tournaments (TGWBC 2026; rules in `TGWBC2026-ENG.pdf`). Selenium bots sit at tables, count games
 from table chat and send results over TCP to one server that stores them in SQLite. The code is complete with tests but has
-never been run live. See `README.md` for configuration, operations and the admin CLI.
+passed a first live trial on 2026-10-04 (results in `README.md`, Status). `README.md` also covers configuration, operations and the admin CLI.
 
 ## Commands
 
@@ -15,7 +15,7 @@ python3 -m unittest discover -s tests -t .                        # all tests (n
 python3 -m unittest tests.test_server                             # one module
 python3 -m unittest tests.test_server.SomeClass.test_name         # one test
 python3 server.py [--config config/config.toml] [--env .env]      # server
-python3 client.py [--headless]                                    # referee bot (needs selenium, Firefox + geckodriver)
+python3 client.py [--headless] [--no-chat]                                  # referee bot (needs selenium, Firefox + geckodriver)
 python3 -m tools.admin_db --db data/tournament.db <group> -h      # admin CLI (run from repo root)
 ```
 

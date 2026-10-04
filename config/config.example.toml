@@ -1,0 +1,118 @@
+# Copy to config/config.toml and edit. Secrets (PLAYOK_USER, PLAYOK_PASS, BOT_TOKEN) go in .env,
+# not here.
+# Every key is required except where marked optional; a missing or misspelled key stops
+# start-up with a clear message.
+# To run another tournament (or another game) write another file and pass it with --config or
+# REFEREE_CONFIG.
+
+[server]
+host              = "0.0.0.0"
+port              = 9000
+heartbeat_seconds = 15
+backup_seconds    = 300
+max_packet_bytes = 1048576         # a larger declared packet closes the connection (memory guard)
+max_clients = 64                   # simultaneous connections; extra ones are closed at once
+send_timeout_seconds = 5           # a client that does not read for this long is dropped
+auth_timeout_seconds = 5           # a connection must send a valid AUTH within this time
+auth_max_failures = 5              # failed AUTH from one IP address before it is locked out
+auth_lockout_seconds = 60          # failures are counted in this window; the lockout lasts as long
+
+[database]
+path       = "data/tournament.db"
+# optional: roster CSV loaded at start-up (re-loading is safe)
+teams_file = "data/teams.csv"
+
+[client]
+server_host           = "127.0.0.1"
+server_port           = 9000
+poll_seconds          = 0.5
+reconnect_max_seconds = 30
+# auto: join lobby tables with two valid players; invite: wait for an invitation
+join_mode             = "auto"
+lobby_scan_seconds    = 2
+# unconfirmed results survive a restart here; "" keeps them in memory only
+outbox_path = "data/outbox.jsonl"
+
+[tournament]
+name            = "Demo Tournament"
+format          = "team"               # team or individual
+year            = 2027                 # optional
+total_matches   = 12                   # games per micro-match
+break_after     = 0                    # 0 = no break rule
+break_minutes   = 5
+timezone        = "Europe/Warsaw"
+language        = "en"
+# PlayOK nicknames allowed to give commands and invite the bot
+admins          = ["wbcexampleadmin"]
+team_size       = 3                    # team format only (ignored for individual)
+max_substitutes = 1                    # team format only
+no_show_minutes = 15
+
+[tournament.scoring]
+win        = 1.0                       # points per game
+draw       = 0.5
+loss       = 0.0
+match_win  = 1.0                       # points per team match
+match_draw = 0.5
+match_loss = 0.0
+tiebreaks  = ["score_difference", "head_to_head", "sudden_death"]
+
+[tournament.table_rules]               # the bot warns in chat when a table breaks these
+time_control  = "1m+1s"
+swap2         = true
+rated         = true
+public        = true
+no_undo       = true
+player_prefix = "wbc"                  # nicknames must start with this ("" = no rule)
+
+[commands]
+prefix     = "!"
+admin_only = ["start", "leave", "break", "set", "rules"]
+
+[playok]
+site_url   = "https://www.playok.com/en/gomoku/"
+lobby_room = 3
+
+[playok.selectors]
+chat_messages     = "div.bsbb.tsbinner div.tind"
+chat_input        = "div.bsbb.tsbinner form input"
+# two elements: seat #1, seat #2 ("-" = empty)
+seat_names        = ".tplcont .nowrel"
+table_title       = ".ttlcont > div:nth-child(2)"      # "table #106  3m" and the flags after it
+invitation_text   = "div.alrt.dcpd > div.mbsp"
+invitation_accept = "div.alrt.dcpd > button.minw:nth-of-type(1)"
+invitation_reject = "div.alrt.dcpd > button.minw:nth-of-type(2)"
+leave_table       = "div.ttlnav button.butlh:nth-child(2)"
+lobby_rows        = ".tlst a.awrap"
+lobby_table_no    = ".tnum"
+lobby_time        = ".tpar1"
+# taken seats (name + rating); empty seats are not matched
+lobby_seats       = ".tplnorm"
+# inside one lobby row: what the bot clicks to enter that table
+lobby_join        = ".tjoin button"
+cookie_accept     = 'button[mode="primary"]'           # optional banner: skipped when absent
+login_open        = ".lbpbg"
+login_user        = 'input[name="username"]'
+login_pass        = 'input[type="password"]'
+login_submit      = "form button"
+login_start       = "button.lbprm"                     # "play" button shown after logging in
+room_select       = "select.selcsl"
+room_option       = "select.selcsl > option:nth-child({room})"   # {room} = playok.lobby_room
+
+# regular expressions applied to system chat lines (the text after "+ ")
+[playok.patterns]
+win_p1     = '^player #1 wins$'
+win_p2     = '^player #2 wins$'
+draw       = '^#draw'
+timeout    = '^#(?P<seat>[12]) exceeded time for game$'
+join       = '^(?P<name>\S+) \[(?P<rating>\d+)\] joins$'
+leave      = '^(?P<name>\S+) leaves$'
+table_header = '^table #(?P<table>\d+)\s+(?P<time>\d+m(?:\+\d+s)?)(?:,\s*(?P<flags>.+))?$'
+invitation = '^(?P<user>\S+) \[(?P<elo>\d+)\] invites you to table #(?P<table>\d+) \((?P<info>[^)]*)\); accept\?$'
+
+[messages]
+break_text = "Break! It is {curr_time} now, please continue the match not later than {resume_time}."
+bye        = "bye"
+
+[messages.rules]
+en = "Replace with the rules reminder in English."
