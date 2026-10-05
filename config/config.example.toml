@@ -122,9 +122,10 @@ invitation = '^(?P<user>\S+) \[(?P<elo>\d+)\] invites you to table #(?P<table>\d
 [stats]
 url             = "https://www.playok.com/en/stat.phtml"
 game_code       = "gm"                 # gomoku
-# the zone the page writes game dates in; check it once against a game you know (the live
-# page showed a time one hour before the game record, so it is not necessarily the local one)
-timezone        = "UTC"
+# the zone the page writes game dates in: UTC+1 all year (checked 2026-10-04 against the server
+# clock and the game records, which use Warsaw time, UTC+2 in summer); check again after the
+# clocks change on 2026-10-25
+timezone        = "Etc/GMT-1"
 timeout_seconds = 5
 
 [messages]
