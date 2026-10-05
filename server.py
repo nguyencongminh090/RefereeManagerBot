@@ -17,6 +17,7 @@ from network.messages      import RequestType, ResponseType
 from network.options       import ServerSocketOptions
 from network.server_socket import TcpServerSocket
 from serverapp.backup      import BackupSchedule, DatabaseBackup
+from serverapp.bot_status  import BotStatusProvider
 from serverapp.claims      import ClaimRegistry
 from serverapp.match_request import (MatchResultRequest, SetScoreRequest, match_id_of,
                                      parse_match_result, parse_set_score)
@@ -24,6 +25,9 @@ from serverapp.router      import PacketRouter
 from serverapp.sessions    import AuthLockout, SessionRegistry
 from storage               import Database, RepositoryOptions, SqliteTeamRepository, TournamentStore
 from storage.models        import RankingRules, TournamentSpec
+from webui.actions         import ActionOptions, DashboardActions
+from webui.http_server     import DashboardServer
+from webui.state           import DashboardOptions, DashboardState
 from storage.errors        import (DuplicateGameError, MicroMatchFullError, NotFoundError,
                                    PlayerInactiveError, SameEntrantError, StorageError,
                                    UnknownPlayerError, ValidationError)
@@ -42,6 +46,19 @@ _MAX_SWEEP_TICK_SEC   = 1.0
 _NO_TABLE_LABEL       = "-"
 _SET_SCORE            = RequestType.SET_SCORE.value   # marks errors that answer a !set
 _SERVER_ACTOR         = "server"   # audit-log name for changes the server makes itself
+_EXIT_CONFIG          = 2          # the config or secrets are wrong
+_EXIT_STARTUP         = 3          # the config is fine but the server cannot start (busy port)
+
+
+class StartupError(Exception):
+    """The server cannot start although the config is valid, for example a busy port."""
+
+
+def _port_problem(source: str, section: str, bind: Tuple[str, int], exc: OSError) -> StartupError:
+    host, port = bind
+    return StartupError(
+        f"the {section} cannot listen on {host}:{port}: {exc.strerror or exc}. "
+        f"Stop the program that uses the port or change 'port' under [{section}] in {source}.")
 
 
 def ranking_rules(settings: Settings) -> RankingRules:
@@ -100,6 +117,7 @@ class Server(IScoreObserver):
         self._claims   = ClaimRegistry()
         self._backups  = BackupSchedule(DatabaseBackup(self._db).run, cfg.backup_seconds, clock)
         self._router   = PacketRouter(self._handlers())
+        self._dashboard = self._open_dashboard(tournament_id)
         self._running  = threading.Event()
         self._stopped  = False
 
@@ -116,6 +134,38 @@ class Server(IScoreObserver):
     def port(self) -> int:
         """The TCP port actually bound (differs from the config when it says 0)."""
         return self._socket.port
+
+    @property
+    def dashboard_port(self) -> Optional[int]:
+        """The TCP port of the organizer web page, or None when the dashboard is disabled."""
+        return self._dashboard.port if self._dashboard else None
+
+    def _open_dashboard(self, tournament_id: int) -> Optional[DashboardServer]:
+        """Builds the dashboard; a busy port becomes a StartupError and closes the database."""
+        try:
+            return self._build_dashboard(tournament_id)
+        except OSError as exc:
+            self._db.close()
+            config = self.settings.dashboard
+            raise _port_problem(self.settings.source, "dashboard",
+                                (config.host, config.port), exc) from exc
+
+    def _build_dashboard(self, tournament_id: int) -> Optional[DashboardServer]:
+        config = self.settings.dashboard
+        if not config.enabled:
+            return None
+        scoring = self.settings.tournament.scoring.games
+        options = DashboardOptions(scoring, ranking_rules(self.settings), config.recent_games,
+                                   config.audit_entries, config.allow_edit)
+        state = DashboardState(self._store, tournament_id,
+                               BotStatusProvider(self._sessions, self._claims), options)
+        actions = None
+        if config.allow_edit:
+            # a change from the page re-broadcasts the standings to the bots, like a bot result
+            actions = DashboardActions(self._store, tournament_id,
+                                       ActionOptions(scoring, self._repo.notify_all))
+        return DashboardServer(config, self.settings.secrets.dashboard_token or "", state,
+                               actions)
 
     def _handlers(self) -> Dict[int, Callable[[Addr, Dict[str, Any]], None]]:
         return {
@@ -167,7 +217,14 @@ class Server(IScoreObserver):
         Args:
             block: If true, waits until stopped (Ctrl+C or request_stop), then stops the server.
         """
-        self._socket.start_listening()
+        try:
+            self._socket.start_listening()
+        except OSError as exc:
+            self.stop()
+            cfg = self.settings.server
+            raise _port_problem(self.settings.source, "server", (cfg.host, cfg.port), exc) from exc
+        if self._dashboard:
+            self._dashboard.start()
         self._running.set()
         threading.Thread(target=self._housekeeping, daemon=True, name="housekeeping").start()
         logger.info("server listening on %s:%s", self.settings.server.host, self.port)
@@ -190,6 +247,8 @@ class Server(IScoreObserver):
         self._stopped = True
         self._running.clear()
         self._socket.stop()
+        if self._dashboard:
+            self._dashboard.stop()
         self._backup_now()
         self._db.close()
         logger.info("server stopped")
@@ -384,9 +443,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         server = Server(ConfigLoader.load(args.config, env_file=args.env, role="server"))
     except ConfigError as exc:
         print(exc, file=sys.stderr)
-        return 2
+        return _EXIT_CONFIG
+    except StartupError as exc:
+        print(exc, file=sys.stderr)
+        return _EXIT_STARTUP
     signal.signal(signal.SIGTERM, lambda *_: server.request_stop())
-    server.start()
+    try:
+        server.start()
+    except StartupError as exc:
+        print(exc, file=sys.stderr)
+        return _EXIT_STARTUP
     return 0
 
 

@@ -35,7 +35,10 @@ Update `ALLOWED_IMPORTS` there if you add a package or a dependency edge.
   backoff, heartbeat and re-sends results from a JSONL outbox until `MATCH_ACK`.
 - `storage/`: SQLite schema/migrations, `TournamentStore`, `SqliteTeamRepository`. The `games` table is the source of truth;
   standings are derived. Idempotent by game id.
-- `serverapp/`: server-side sessions, table claims, message router, backup.
+- `serverapp/`: server-side sessions, table claims, message router, backup, bot status for the dashboard.
+- `webui/`: organizer dashboard (stdlib HTTP, token auth) started by `Server`; reads `storage` and the
+  `IBotStatusSource` port. Read-only unless `[dashboard] allow_edit`; edits (void game, pair score, sudden death) go
+  through `TournamentStore` with actor `dashboard`.
 - `referee/`: client side. Page parsing (`html_dom.py`, `page_parser.py`) is stdlib-only and testable against saved PlayOK
   pages; Selenium is isolated behind `driver_port.py`/`driver.py`. `session.py` runs a match, `commands/` handles chat commands.
 - `tools/`: admin CLI over `storage` (every change audit-logged).
