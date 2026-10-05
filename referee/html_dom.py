@@ -7,7 +7,7 @@ without a browser. Supported selectors: tag, *, .class, #id, [attr], [attr=value
 """
 import re
 from html.parser import HTMLParser
-from typing      import Dict, Iterator, List, Optional, Tuple, Union
+from typing      import Callable, Dict, Iterator, List, Optional, Tuple, Union
 
 _VOID        = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
                 "source", "track", "wbr"}
@@ -168,33 +168,29 @@ def _index_among(node: Node, same_tag: bool) -> int:
     return siblings.index(node) + 1
 
 
+def _is_last_child(node: Node) -> bool:
+    return node.parent is not None and node.parent.elements()[-1] is node
+
+
+def _has_attr(node: Node, name: str, value: str = "") -> bool:
+    return name in node.attrs and (not value or node.attrs[name] == value)
+
+
+# selector kind -> test(node, *args); a compound matches when every one of its parts passes
+_PART_TESTS: Dict[str, Callable[..., bool]] = {
+    "tag"          : lambda node, tag: tag == "*" or node.tag == tag.lower(),
+    "cls"          : lambda node, name: name in node.classes,
+    "id"           : lambda node, value: node.attrs.get("id") == value,
+    "attr"         : _has_attr,
+    "first-child"  : lambda node, _: _index_among(node, False) == 1,
+    "last-child"   : lambda node, _: _is_last_child(node),
+    "nth-child"    : lambda node, n: _index_among(node, False) == int(n),
+    "nth-of-type"  : lambda node, n: _index_among(node, True) == int(n),
+}
+
+
 def _matches_compound(node: Node, compound: Compound) -> bool:
-    for kind, *args in compound:
-        if kind == "tag":
-            if args[0] != "*" and node.tag != args[0].lower():
-                return False
-        elif kind == "cls":
-            if args[0] not in node.classes:
-                return False
-        elif kind == "id":
-            if node.attrs.get("id") != args[0]:
-                return False
-        elif kind == "attr":
-            if args[0] not in node.attrs or (args[1] and node.attrs[args[0]] != args[1]):
-                return False
-        elif kind == "first-child":
-            if _index_among(node, False) != 1:
-                return False
-        elif kind == "last-child":
-            if node.parent is None or node.parent.elements()[-1] is not node:
-                return False
-        elif kind == "nth-child":
-            if _index_among(node, False) != int(args[0]):
-                return False
-        elif kind == "nth-of-type":
-            if _index_among(node, True) != int(args[0]):
-                return False
-    return True
+    return all(_PART_TESTS[kind](node, *args) for kind, *args in compound)
 
 
 def _matches_chain(node: Node, chain: List[Tuple[str, Compound]], index: int) -> bool:

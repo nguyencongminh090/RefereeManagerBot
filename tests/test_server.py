@@ -229,6 +229,15 @@ class ServerTests(unittest.TestCase):
         b.sock.sendall(PacketProtocol.encode(["not", "a", "dict"]))
         self.assertEqual("UNKNOWN_TYPE", b.recv_type(ResponseType.ERROR)["data"]["code"])
 
+    def test_an_unexpected_handler_failure_gets_internal_and_the_connection_survives(self):
+        server = self.start()
+        b = self.bot()
+        server._repo.snapshot = lambda: 1 / 0          # any bug inside a handler
+        b.send(RequestType.SCORE_QUERY)
+        self.assertEqual("INTERNAL", b.recv_type(ResponseType.ERROR)["data"]["code"])
+        b.send(RequestType.ROSTER_QUERY)
+        b.recv_type(ResponseType.ROSTER_DATA)
+
     # ------------------------------------------------------------- set score
     def set_score(self, bot, scores, sender=ADMIN, players=("wbca1", "wbcb1")):
         bot.send(RequestType.SET_SCORE, {"sender": sender, "players": list(players), "scores": scores})

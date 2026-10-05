@@ -215,7 +215,8 @@ config/    settings.py, process_config.py, messages.py, reader.py, config.exampl
 network/   messages.py, ports.py, protocol.py, options.py, outbox.py, server_socket.py, client_socket.py
 storage/   schema.sql, database.py, tournament_store.py, sqlite_repository.py, pair_adjust.py, models.py, errors.py, ...  (-> domain)
 referee/   html_dom.py, page_parser.py, lobby.py, driver.py, driver_port.py, browser.py, session.py, info_text.py, commands/
-serverapp/ claims.py, sessions.py, router.py, backup.py, bot_status.py, match_request.py (MATCH_RESULT and SET_SCORE packets)
+serverapp/ claims.py, sessions.py, router.py, backup.py, bot_status.py, match_request.py (MATCH_RESULT and SET_SCORE packets),
+          link.py, auth.py, results.py, tables.py, queries.py (one handler class per packet concern)
 webui/     state.py, public_state.py, actions.py, assets.py, http_server.py, public_server.py, static/   (-> domain, config, storage)
 tools/     admin_db.py, seed_demo.py
 tests/     fake_playok/ (fake site for browser tests), test_*.py

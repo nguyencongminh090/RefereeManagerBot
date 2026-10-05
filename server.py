@@ -1,17 +1,15 @@
 """Central referee server: composition root and CLI entry point."""
 import argparse
-import hmac
 import logging
 import os
 import signal
 import sys
 import threading
 import time
-from datetime import datetime, timezone
 from typing   import Any, Callable, Dict, List, Optional, Tuple
 
 from config.settings       import ConfigError, ConfigLoader, ServerConfig, Settings
-from domain.ports           import IScoreObserver, ITeamRepository, MatchRecord, PairScoreChange
+from domain.ports          import IScoreObserver, ITeamRepository
 from domain.types          import Scoring
 from network.messages      import RequestType, ResponseType
 from network.options       import ServerSocketOptions
@@ -19,10 +17,13 @@ from network.server_socket import TcpServerSocket
 from serverapp.backup      import BackupSchedule, DatabaseBackup
 from serverapp.bot_status  import BotStatusProvider
 from serverapp.claims      import ClaimRegistry
-from serverapp.match_request import (MatchResultRequest, SetScoreRequest, match_id_of,
-                                     parse_match_result, parse_set_score)
+from serverapp.auth        import AuthHandler, AuthOptions
+from serverapp.link        import ClientLink
+from serverapp.queries     import QueryHandlers
+from serverapp.results     import ResultHandler, SetScoreHandler
 from serverapp.router      import PacketRouter
-from serverapp.sessions    import AuthLockout, SessionRegistry
+from serverapp.sessions    import SessionRegistry
+from serverapp.tables      import TableHandlers
 from storage               import Database, RepositoryOptions, SqliteTeamRepository, TournamentStore
 from storage.models        import RankingRules, TournamentSpec
 from webui.actions         import ActionOptions, DashboardActions
@@ -30,23 +31,15 @@ from webui.http_server     import DashboardServer
 from webui.public_server   import PublicServer
 from webui.public_state    import CachedSnapshot, PublicOptions, PublicState
 from webui.state           import DashboardOptions, DashboardState
-from storage.errors        import (DuplicateGameError, MicroMatchFullError, NotFoundError,
-                                   PlayerInactiveError, SameEntrantError, StorageError,
-                                   UnknownPlayerError, ValidationError)
+from storage.errors        import NotFoundError
 
 
 logger = logging.getLogger(__name__)
 
 Addr = Tuple[str, int]
 
-# most specific first: UnknownPlayerError is a NotFoundError
-_ERROR_CODES = ((UnknownPlayerError, "UNKNOWN_PLAYER"), (PlayerInactiveError, "PLAYER_INACTIVE"),
-                (SameEntrantError, "SAME_TEAM"), (MicroMatchFullError, "MICROMATCH_FULL"),
-                (ValidationError, "BAD_RESULT"), (NotFoundError, "NOT_FOUND"))
 _MISSED_HEARTBEATS    = 3
 _MAX_SWEEP_TICK_SEC   = 1.0
-_NO_TABLE_LABEL       = "-"
-_SET_SCORE            = RequestType.SET_SCORE.value   # marks errors that answer a !set
 _SERVER_ACTOR         = "server"   # audit-log name for changes the server makes itself
 _EXIT_CONFIG          = 2          # the config or secrets are wrong
 _EXIT_STARTUP         = 3          # the config is fine but the server cannot start (busy port)
@@ -115,15 +108,6 @@ class Server(IScoreObserver):
 
         self._sessions  = SessionRegistry(clock, cfg.heartbeat_seconds * _MISSED_HEARTBEATS,
                                           cfg.auth_timeout_seconds)
-        self._lockout   = AuthLockout(cfg.auth_max_failures, cfg.auth_lockout_seconds, clock)
-        self._claims    = ClaimRegistry()
-        self._backups   = BackupSchedule(DatabaseBackup(self._db).run, cfg.backup_seconds, clock)
-        self._router    = PacketRouter(self._handlers())
-        self._dashboard = self._open_dashboard(tournament_id)
-        self._public    = self._open_public(tournament_id)
-        self._running   = threading.Event()
-        self._stopped   = False
-
         self._socket = TcpServerSocket(
             host                   = cfg.host,
             port                   = cfg.port,
@@ -132,6 +116,18 @@ class Server(IScoreObserver):
             on_disconnect_callback = self._on_disconnect,
             options                = _socket_options(cfg),
         )
+
+        self._claims    = ClaimRegistry()
+        self._link      = ClientLink(self._socket)
+        self._auth      = AuthHandler(self._sessions, self._link, AuthOptions(
+            settings.secrets.bot_token or "", settings.tournament.name, cfg.heartbeat_seconds,
+            cfg.auth_max_failures, cfg.auth_lockout_seconds, clock))
+        self._backups   = BackupSchedule(DatabaseBackup(self._db).run, cfg.backup_seconds, clock)
+        self._router    = PacketRouter(self._handlers())
+        self._dashboard = self._open_dashboard(tournament_id)
+        self._public    = self._open_public(tournament_id)
+        self._running   = threading.Event()
+        self._stopped   = False
 
     @property
     def port(self) -> int:
@@ -194,13 +190,17 @@ class Server(IScoreObserver):
                                actions)
 
     def _handlers(self) -> Dict[int, Callable[[Addr, Dict[str, Any]], None]]:
+        results   = ResultHandler(self._repo, self._sessions, self._link)
+        set_score = SetScoreHandler(self._repo, self._link, self.settings.tournament.is_admin)
+        queries   = QueryHandlers(self._repo, self._link)
+        tables    = TableHandlers(self._claims, self._sessions, self._link)
         return {
-            RequestType.MATCH_RESULT.value  : self._on_match_result,
-            RequestType.SCORE_QUERY.value   : self._on_score_query,
-            RequestType.SET_SCORE.value     : self._on_set_score,
-            RequestType.ROSTER_QUERY.value  : self._on_roster_query,
-            RequestType.TABLE_CLAIM.value   : self._on_table_claim,
-            RequestType.TABLE_RELEASE.value : self._on_table_release,
+            RequestType.MATCH_RESULT.value  : results.on_match_result,
+            RequestType.SCORE_QUERY.value   : queries.on_score_query,
+            RequestType.SET_SCORE.value     : set_score.on_set_score,
+            RequestType.ROSTER_QUERY.value  : queries.on_roster_query,
+            RequestType.TABLE_CLAIM.value   : tables.on_claim,
+            RequestType.TABLE_RELEASE.value : tables.on_release,
             RequestType.HEARTBEAT.value     : lambda addr, packet: None,
         }
 
@@ -302,7 +302,7 @@ class Server(IScoreObserver):
 
     # ------------------------------------------------------------------ callbacks
     def _on_connect(self, addr: Addr) -> None:
-        if self._lockout.is_locked(addr[0]):
+        if self._auth.is_locked(addr[0]):
             logger.info("refusing %s: address is locked out", addr)
             self._socket.close_client(addr)
             return
@@ -315,146 +315,22 @@ class Server(IScoreObserver):
     def on_score_updated(self, snapshot: str) -> None:
         """Broadcasts the new standings text to every authenticated bot."""
         for addr in self._sessions.authenticated():
-            self._socket.send_packet(addr, {'type': ResponseType.BROADCAST.value, 'text': snapshot})
+            self._link.send(addr, {'type': ResponseType.BROADCAST.value, 'text': snapshot})
 
     # ------------------------------------------------------------------- packets
-    def _reply(self, addr: Addr, response: ResponseType, **data: Any) -> None:
-        self._socket.send_packet(addr, {'type': response.value, 'data': data})
-
-    def _error(self, addr: Addr, code: str, message: str, **extra: Any) -> None:
-        self._reply(addr, ResponseType.ERROR, code=code, message=message, **extra)
-
     def _handle_client_message(self, client_addr: Addr, packet: Dict[str, Any]):
         self._sessions.touch(client_addr)
         try:
             packet_type = packet.get('type') if isinstance(packet, dict) else None
             if packet_type == RequestType.AUTH.value:
-                return self._on_auth(client_addr, packet)
+                return self._auth.on_auth(client_addr, packet)
             if not self._sessions.is_authenticated(client_addr):
-                return self._error(client_addr, "NOT_AUTHENTICATED", "send AUTH first")
+                return self._link.error(client_addr, "NOT_AUTHENTICATED", "send AUTH first")
             if not self._router.route(client_addr, packet):
-                self._error(client_addr, "UNKNOWN_TYPE", f"unknown packet type {packet_type!r}")
+                self._link.error(client_addr, "UNKNOWN_TYPE", f"unknown packet type {packet_type!r}")
         except Exception:
             logger.exception("failed to handle packet from %s", client_addr)
-            self._error(client_addr, "INTERNAL", "the server could not process this packet")
-
-    def _on_auth(self, addr: Addr, packet: Dict[str, Any]) -> None:
-        data     = packet.get('data') or {}
-        token    = str(data.get('token') or "")
-        expected = self.settings.secrets.bot_token or ""
-        if not expected or not hmac.compare_digest(token.encode(), expected.encode()):
-            return self._reject_auth(addr)
-        name = str(data.get('bot_name') or f"{addr[0]}:{addr[1]}")
-        self._lockout.clear(addr[0])
-        self._sessions.authenticate(addr, name)
-        logger.info("bot '%s' authenticated from %s", name, addr)
-        server_time = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        self._reply(addr, ResponseType.AUTH_OK, server_time=server_time,
-                    tournament=self.settings.tournament.name,
-                    heartbeat_seconds=self.settings.server.heartbeat_seconds)
-
-    def _reject_auth(self, addr: Addr) -> None:
-        logger.warning("authentication failed from %s", addr)
-        if self._lockout.record_failure(addr[0]):
-            logger.warning("address %s locked out for %ss after repeated failed authentication",
-                           addr[0], self.settings.server.auth_lockout_seconds)
-        self._error(addr, "AUTH_FAILED", "wrong token")
-        self._socket.close_client(addr)
-
-    def _on_match_result(self, addr: Addr, packet: Dict[str, Any]) -> None:
-        try:
-            request = parse_match_result(packet)
-        except ValueError as exc:
-            match_id = match_id_of(packet)
-            logger.info("result %s rejected (BAD_PACKET): %s", match_id, exc)
-            return self._error(addr, "BAD_PACKET", str(exc), match_id=match_id)
-        self._record_result(addr, request)
-
-    def _record_result(self, addr: Addr, request: MatchResultRequest) -> None:
-        bot_name = self._sessions.name_of(addr)
-        try:
-            game_id = self._repo.record_match(MatchRecord(
-                request.players[0], request.results[0], request.players[1], request.results[1],
-                match_id=request.match_id, table_no=request.table_no, bot_name=bot_name))
-            duplicate = False
-            table_label = _NO_TABLE_LABEL if request.table_no is None else request.table_no
-            logger.info("result %s accepted from bot '%s': table %s, %s vs %s",
-                        request.match_id, bot_name, table_label, *request.players)
-        except DuplicateGameError as exc:           # a retry: confirm again, record nothing
-            game_id, duplicate = exc.game_id, True
-            logger.info("result %s duplicate from bot '%s': confirmed again",
-                        request.match_id, bot_name)
-        except StorageError as exc:
-            code = next((c for cls, c in _ERROR_CODES if isinstance(exc, cls)), "REJECTED")
-            logger.info("result %s rejected (%s): %s", request.match_id, code, exc)
-            return self._error(addr, code, str(exc), match_id=request.match_id)
-        self._reply(addr, ResponseType.MATCH_ACK, match_id=request.match_id, duplicate=duplicate,
-                    **self._repo.pair_score(game_id))
-
-    def _on_set_score(self, addr: Addr, packet: Dict[str, Any]) -> None:
-        try:
-            request = parse_set_score(packet)
-        except ValueError as exc:
-            logger.info("set-score request rejected (BAD_PACKET): %s", exc)
-            return self._error(addr, "BAD_PACKET", str(exc), request=_SET_SCORE)
-        if not self.settings.tournament.is_admin(request.sender):
-            logger.warning("set-score request from '%s' refused: not an admin", request.sender)
-            return self._error(addr, "NOT_ADMIN", f"'{request.sender}' is not a tournament admin",
-                               request=_SET_SCORE)
-        self._apply_set_score(addr, request)
-
-    def _apply_set_score(self, addr: Addr, request: SetScoreRequest) -> None:
-        change = PairScoreChange(*request.players, *request.points, actor=request.sender)
-        try:
-            score = self._repo.set_pair_score(change)
-        except StorageError as exc:
-            code = next((c for cls, c in _ERROR_CODES if isinstance(exc, cls)), "REJECTED")
-            logger.info("set-score by '%s' rejected (%s): %s", request.sender, code, exc)
-            return self._error(addr, code, str(exc), request=_SET_SCORE)
-        logger.info("score of %s and %s set to %s by '%s'", *request.players, request.points,
-                    request.sender)
-        self._reply(addr, ResponseType.SCORE_SET, **score)
-
-    def _on_score_query(self, addr: Addr, packet: Dict[str, Any]) -> None:
-        self._socket.send_packet(
-            addr, {'type': ResponseType.SCORE_DATA.value, 'text': self._repo.snapshot()})
-
-    def _on_roster_query(self, addr: Addr, packet: Dict[str, Any]) -> None:
-        players = [{'name': p['nickname'], 'team': p['entrant_name'], 'role': p['role'],
-                    'active': bool(p['active'])} for p in self._repo.roster()]
-        self._reply(addr, ResponseType.ROSTER_DATA, players=players)
-
-    def _table_no(self, addr: Addr, packet: Dict[str, Any]) -> Optional[int]:
-        table_no = (packet.get('data') or {}).get('table_no')
-        if isinstance(table_no, int) and not isinstance(table_no, bool):
-            return table_no
-        self._error(addr, "BAD_PACKET", "data.table_no must be a number")
-        return None
-
-    def _on_table_claim(self, addr: Addr, packet: Dict[str, Any]) -> None:
-        table_no = self._table_no(addr, packet)
-        if table_no is None:
-            return
-        owner = self._claims.claim(table_no, addr)
-        if owner != addr and self._is_same_bot(owner, addr):
-            # the bot reconnected before the server dropped its old link: the table stays with the bot
-            owner = addr if self._claims.take_over(table_no, owner, addr) else owner
-        if owner == addr:
-            self._reply(addr, ResponseType.CLAIM_OK, table_no=table_no)
-        else:
-            self._reply(addr, ResponseType.CLAIM_DENIED, table_no=table_no,
-                        held_by=self._sessions.name_of(owner))
-
-    def _is_same_bot(self, first: Addr, second: Addr) -> bool:
-        name = self._sessions.name_of(first)
-        return name is not None and name == self._sessions.name_of(second)
-
-    def _on_table_release(self, addr: Addr, packet: Dict[str, Any]) -> None:
-        table_no = self._table_no(addr, packet)
-        if table_no is None:
-            return
-        if not self._claims.release(table_no, addr):
-            self._error(addr, "NOT_OWNER", f"table {table_no} is not claimed by this bot")
+            self._link.error(client_addr, "INTERNAL", "the server could not process this packet")
 
 
 def main(argv: Optional[List[str]] = None) -> int:

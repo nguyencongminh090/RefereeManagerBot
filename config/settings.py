@@ -23,6 +23,8 @@ from config.messages import MessagesConfig, MessageTexts, load_messages
 from config.process_config import (ClientConfig, DashboardConfig, DatabaseConfig, PublicConfig,
                                     ServerConfig)
 from config.reader import ConfigError, Section, parse_env_file
+from config.sections import (build_client, build_dashboard, build_public, build_server,
+                             check_page_ports)
 from domain.types import Scoring
 
 
@@ -31,7 +33,6 @@ CONFIG_ENV_VAR      = "REFEREE_CONFIG"
 DEFAULT_ENV_FILE    = ".env"
 ROUND_START_FORMAT  = "%Y-%m-%d %H:%M"
 
-JOIN_MODES   = ("auto", "invite")
 FORMATS      = ("team", "individual")
 TIEBREAKS    = ("score_difference", "head_to_head", "sudden_death")
 SELECTORS    = ("chat_messages", "chat_input", "seat_names", "table_title", "invitation_text",
@@ -229,6 +230,22 @@ class Settings:
 
 
 # ----------------------------------------------------------------------------- loader
+@dataclass(frozen=True)
+class _LoadContext:
+    """Where a load reads from.
+
+    Attributes:
+        source: Path of the config file.
+        env_file: Path of the secrets file.
+        env: Environment that overrides the secrets file.
+        role: "client", "server" or None; decides which secrets are required.
+    """
+    source  : str
+    env_file: str
+    env     : Mapping[str, str]
+    role    : Optional[str]
+
+
 class ConfigLoader:
     """Reads and validates the config file and secrets; all methods are static."""
 
@@ -274,91 +291,61 @@ class ConfigLoader:
 
         problems: List[str] = []
         root = Section(raw, "", problems)
-        settings = ConfigLoader._build(root, problems, env_file or DEFAULT_ENV_FILE, role, env,
-                                       source)
+        settings = ConfigLoader._build(
+            root, problems, _LoadContext(source, env_file or DEFAULT_ENV_FILE, env, role))
         if problems:
             raise ConfigError(source, problems)
         return settings
 
     @staticmethod
-    def _build(root: Section, problems: List[str], env_file: str, role: Optional[str],
-               env: Mapping[str, str], source: str) -> Settings:
-        server = root.table("server")
-        server_cfg = ServerConfig(
-            server.text("host"), server.integer("port", 1),
-            server.number("heartbeat_seconds", 0, True), server.number("backup_seconds", 0, True),
-            server.integer("max_packet_bytes", 1), server.integer("max_clients", 1),
-            server.number("send_timeout_seconds", 0, True),
-            server.number("auth_timeout_seconds", 0, True), server.integer("auth_max_failures", 1),
-            server.number("auth_lockout_seconds", 0, True))
-        server.finish()
-
-        dash = root.table("dashboard")
-        dashboard_cfg = DashboardConfig(
-            dash.boolean("enabled"), dash.text("host"), dash.integer("port", 1),
-            dash.number("refresh_seconds", 0, True), dash.integer("recent_games", 1),
-            dash.integer("audit_entries", 1), dash.boolean("allow_edit"))
-        dash.finish()
-
-        pub = root.table("public")
-        public_cfg = PublicConfig(
-            pub.boolean("enabled"), pub.text("host"), pub.integer("port", 1),
-            pub.number("refresh_seconds", 0, True), pub.integer("recent_games", 1))
-        pub.finish()
-        ConfigLoader._check_page_ports(dashboard_cfg, public_cfg, problems)
-
+    def _build(root: Section, problems: List[str], ctx: "_LoadContext") -> Settings:
+        server_cfg    = build_server(root.table("server"))
+        dashboard_cfg = build_dashboard(root.table("dashboard"))
+        public_cfg    = build_public(root.table("public"))
+        check_page_ports(dashboard_cfg, public_cfg, problems)
         db = root.table("database")
-        db_cfg = DatabaseConfig(db.text("path"), db.optional_text("teams_file"))
+        database_cfg  = DatabaseConfig(path=db.text("path"), teams_file=db.optional_text("teams_file"))
         db.finish()
-
-        client = root.table("client")
-        client_cfg = ClientConfig(
-            client.text("server_host"), client.integer("server_port", 1),
-            client.number("poll_seconds", 0, True), client.number("reconnect_max_seconds", 0, True),
-            client.choice("join_mode", JOIN_MODES), client.number("lobby_scan_seconds", 0, True),
-            client.text("outbox_path", allow_empty=True),
-            client.integer("max_pending_results", 1),
-            client.integer("unreadable_polls_before_alert", 1))
-        client.finish()
-
+        client_cfg    = build_client(root.table("client"))
         tournament_cfg = ConfigLoader._tournament(root.table("tournament"), problems)
-
-        commands = root.table("commands")
-        commands_cfg = CommandsConfig(commands.text("prefix"),
-                                      tuple(c.lower() for c in commands.text_list("admin_only")),
-                                      commands.number("cheer_cooldown_seconds", 0),
-                                      commands.number("break_max_minutes", 0, True))
-        commands.finish()
-
-        playok_cfg = ConfigLoader._playok(root.table("playok"), problems)
-        stats_cfg = ConfigLoader._stats(root.table("stats"), problems)
-        messages_cfg = load_messages(root.table("messages"), tournament_cfg.language, problems)
+        commands_cfg  = ConfigLoader._commands(root.table("commands"))
+        playok_cfg    = ConfigLoader._playok(root.table("playok"), problems)
+        stats_cfg     = ConfigLoader._stats(root.table("stats"), problems)
+        messages_cfg  = load_messages(root.table("messages"), tournament_cfg.language, problems)
         root.finish()
+        secrets = ConfigLoader._secrets(ctx, dashboard_cfg.enabled, problems)
+        return Settings(
+            server=server_cfg, dashboard=dashboard_cfg, public=public_cfg, database=database_cfg,
+            client=client_cfg, tournament=tournament_cfg, commands=commands_cfg,
+            playok=playok_cfg, stats=stats_cfg, messages=messages_cfg, secrets=secrets,
+            source=ctx.source)
 
-        file_values = parse_env_file(env_file)
+    @staticmethod
+    def _commands(t: Section) -> CommandsConfig:
+        config = CommandsConfig(
+            prefix=t.text("prefix"),
+            admin_only=tuple(c.lower() for c in t.text_list("admin_only")),
+            cheer_cooldown_seconds=t.number("cheer_cooldown_seconds", 0),
+            break_max_minutes=t.number("break_max_minutes", 0, True))
+        t.finish()
+        return config
+
+    @staticmethod
+    def _secrets(ctx: "_LoadContext", dashboard_enabled: bool, problems: List[str]) -> Secrets:
+        file_values = parse_env_file(ctx.env_file)
         known = {name for names in SECRET_KEYS.values() for name in names} | {DASHBOARD_TOKEN_KEY}
         # An empty environment variable never hides the file value.
-        merged = {**file_values, **{k: v for k, v in env.items() if k in known and v}}
-        required = SECRET_KEYS.get(role, ())
-        if role == "server" and dashboard_cfg.enabled:
+        merged = {**file_values, **{k: v for k, v in ctx.env.items() if k in known and v}}
+        required = SECRET_KEYS.get(ctx.role, ())
+        if ctx.role == "server" and dashboard_enabled:
             required += (DASHBOARD_TOKEN_KEY,)
         for key in required:
             if not merged.get(key):
                 problems.append(
-                    f"secret {key} is not set (put it in {env_file} or the environment)")
-        secrets = Secrets(merged.get("PLAYOK_USER"), merged.get("PLAYOK_PASS"),
-                          merged.get("BOT_TOKEN"), merged.get(DASHBOARD_TOKEN_KEY))
-
-        return Settings(server_cfg, dashboard_cfg, public_cfg, db_cfg, client_cfg, tournament_cfg, commands_cfg, playok_cfg,
-                        stats_cfg, messages_cfg, secrets, source)
-
-    @staticmethod
-    def _check_page_ports(dashboard: DashboardConfig, public: PublicConfig,
-                          problems: List[str]) -> None:
-        if dashboard.enabled and public.enabled and (dashboard.host, dashboard.port) == (
-                public.host, public.port):
-            problems.append(f"'public.port' is {public.port}, the same address as the dashboard; "
-                            "give the two pages different ports")
+                    f"secret {key} is not set (put it in {ctx.env_file} or the environment)")
+        return Secrets(playok_user=merged.get("PLAYOK_USER"), playok_pass=merged.get("PLAYOK_PASS"),
+                       bot_token=merged.get("BOT_TOKEN"),
+                       dashboard_token=merged.get(DASHBOARD_TOKEN_KEY))
 
     @staticmethod
     def _tournament(t: Section, problems: List[str]) -> TournamentConfig:
