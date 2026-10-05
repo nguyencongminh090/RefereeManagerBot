@@ -5,13 +5,13 @@
  * game rows, theme and polling. Everything goes in through textContent, never as markup.
  */
 
-const TOP_RANKS = 3;
-const TIME_START = 11;          // "YYYY-MM-DDTHH:MM:SSZ" -> "HH:MM:SS"
-const TIME_END = 19;
-const THEME_KEY = "dashboard-theme";
-const RESULT_P1_WINS = "p1 wins";
-const RESULT_P2_WINS = "p2 wins";
-const RESULT_DRAW = "draw";
+const TOP_RANKS               = 3;
+const TIME_START              = 11;   // "YYYY-MM-DDTHH:MM:SSZ" -> "HH:MM:SS"
+const TIME_END                = 19;
+const THEME_KEY               = "dashboard-theme";
+const RESULT_P1_WINS          = "p1 wins";
+const RESULT_P2_WINS          = "p2 wins";
+const RESULT_DRAW             = "draw";
 const DEFAULT_REFRESH_SECONDS = 5;
 
 const $ = (id) => document.getElementById(id);

@@ -5,9 +5,9 @@
  * Shared helpers live in common.js, which is loaded first.
  */
 
-const IDLE_QUIET_SECONDS = 45;  // three missed heartbeats (config heartbeat_seconds = 15)
+const IDLE_QUIET_SECONDS = 45;   // three missed heartbeats (config heartbeat_seconds = 15)
 const IDLE_STALE_SECONDS = 90;
-const TAB_NAMES = ["overview", "organizer"];
+const TAB_NAMES          = ["overview", "organizer"];
 
 // ------------------------------------------------------------------ views
 

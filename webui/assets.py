@@ -3,10 +3,10 @@ from dataclasses import dataclass
 from pathlib     import Path
 from typing      import Dict, Optional, Tuple
 
-STATIC_DIR = Path(__file__).parent / "static"
-INDEX_NAME = "index.html"
-ASSET_NAMES = ("dashboard.css", "common.js", "dashboard.js")
-PUBLIC_INDEX_NAME = "public.html"
+STATIC_DIR         = Path(__file__).parent / "static"
+INDEX_NAME         = "index.html"
+ASSET_NAMES        = ("dashboard.css", "common.js", "dashboard.js")
+PUBLIC_INDEX_NAME  = "public.html"
 PUBLIC_ASSET_NAMES = ("dashboard.css", "common.js", "public.js")   # never the organizer script
 
 _CONTENT_TYPES = {

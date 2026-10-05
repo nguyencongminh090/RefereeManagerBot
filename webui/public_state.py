@@ -79,10 +79,10 @@ class CachedSnapshot:
 
     def __init__(self, source: SnapshotSource, ttl_seconds: float,
                  clock: Callable[[], float] = time.monotonic) -> None:
-        self._source = source
-        self._ttl    = ttl_seconds
-        self._clock  = clock
-        self._lock   = threading.Lock()
+        self._source   = source
+        self._ttl      = ttl_seconds
+        self._clock    = clock
+        self._lock     = threading.Lock()
         self._built_at = 0.0
         self._value: Optional[Dict[str, Any]] = None
 
@@ -91,6 +91,6 @@ class CachedSnapshot:
         with self._lock:
             now = self._clock()
             if self._value is None or now - self._built_at >= self._ttl:
-                self._value = self._source.snapshot()
+                self._value    = self._source.snapshot()
                 self._built_at = now
             return dict(self._value)

@@ -113,16 +113,16 @@ class Server(IScoreObserver):
             RepositoryOptions(settings.tournament.scoring.games, ranking=ranking_rules(settings)))
         self._repo.subscribe(self)
 
-        self._sessions = SessionRegistry(clock, cfg.heartbeat_seconds * _MISSED_HEARTBEATS,
-                                         cfg.auth_timeout_seconds)
-        self._lockout  = AuthLockout(cfg.auth_max_failures, cfg.auth_lockout_seconds, clock)
-        self._claims   = ClaimRegistry()
-        self._backups  = BackupSchedule(DatabaseBackup(self._db).run, cfg.backup_seconds, clock)
-        self._router   = PacketRouter(self._handlers())
+        self._sessions  = SessionRegistry(clock, cfg.heartbeat_seconds * _MISSED_HEARTBEATS,
+                                          cfg.auth_timeout_seconds)
+        self._lockout   = AuthLockout(cfg.auth_max_failures, cfg.auth_lockout_seconds, clock)
+        self._claims    = ClaimRegistry()
+        self._backups   = BackupSchedule(DatabaseBackup(self._db).run, cfg.backup_seconds, clock)
+        self._router    = PacketRouter(self._handlers())
         self._dashboard = self._open_dashboard(tournament_id)
         self._public    = self._open_public(tournament_id)
-        self._running  = threading.Event()
-        self._stopped  = False
+        self._running   = threading.Event()
+        self._stopped   = False
 
         self._socket = TcpServerSocket(
             host                   = cfg.host,

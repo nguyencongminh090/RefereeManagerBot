@@ -24,7 +24,7 @@ class FakeState:
 
 class PublicHttpTests(unittest.TestCase):
     def setUp(self):
-        self.state  = FakeState()
+        self.state = FakeState()
         config = PublicConfig(True, "127.0.0.1", 0, 10, 20)
         self.server = PublicServer(config, self.state)
         self.server.start()

@@ -13,17 +13,17 @@ from webui.assets          import ASSET_NAMES, INDEX_NAME, load_asset
 
 logger = logging.getLogger(__name__)
 
-COOKIE_NAME      = "dashboard_token"
-_PAGE_PATH       = "/"
-_STATE_PATH      = "/api/state"
-_JSON_TYPE       = "application/json; charset=utf-8"
-_TEXT_TYPE       = "text/plain; charset=utf-8"
-_STATIC_PREFIX   = "/static/"
-_CSP             = "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'"
-_ACTION_PATH     = "/api/action"
-_CSRF_HEADER     = "X-Dashboard-Action"
-_MAX_BODY_BYTES  = 4096
-_JOIN_TIMEOUT_SEC = 5.0
+COOKIE_NAME        = "dashboard_token"
+_PAGE_PATH         = "/"
+_STATE_PATH        = "/api/state"
+_JSON_TYPE         = "application/json; charset=utf-8"
+_TEXT_TYPE         = "text/plain; charset=utf-8"
+_STATIC_PREFIX     = "/static/"
+_CSP               = "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'"
+_ACTION_PATH       = "/api/action"
+_CSRF_HEADER       = "X-Dashboard-Action"
+_MAX_BODY_BYTES    = 4096
+_JOIN_TIMEOUT_SEC  = 5.0
 _POLL_INTERVAL_SEC = 0.1   # how quickly stop() is noticed by the serving loop
 
 
