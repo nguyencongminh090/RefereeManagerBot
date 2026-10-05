@@ -89,7 +89,19 @@ class DashboardHttpTests(unittest.TestCase):
         response = self.get(f"/?token={TOKEN}")
         self.assertEqual(200, response.status)
         self.assertIn("text/html", response.headers["Content-Type"])
-        self.assertIn(b"/api/state", response.read())
+        self.assertIn(b"/static/dashboard.js", response.read())
+
+    def test_static_files_need_the_token_and_have_the_right_type(self):
+        self.assertEqual(401, self.get("/static/dashboard.css").status)
+        css = self.get(f"/static/dashboard.css?token={TOKEN}")
+        self.assertEqual(200, css.status)
+        self.assertIn("text/css", css.headers["Content-Type"])
+        js = self.get(f"/static/dashboard.js?token={TOKEN}")
+        self.assertIn("javascript", js.headers["Content-Type"])
+
+    def test_static_route_serves_only_listed_files(self):
+        for path in ("/static/nope.css", "/static/..%2fassets.py", "/static/", "/static/index.html/x"):
+            self.assertEqual(404, self.get(f"{path}?token={TOKEN}").status, path)
 
     def test_index_without_token_is_401(self):
         self.assertEqual(401, self.get("/").status)
@@ -108,7 +120,9 @@ class DashboardHttpTests(unittest.TestCase):
         headers = self.get(f"/api/state?token={TOKEN}").headers
         self.assertEqual("no-store", headers["Cache-Control"])
         self.assertEqual("nosniff", headers["X-Content-Type-Options"])
-        self.assertIn("default-src 'self'", headers["Content-Security-Policy"])
+        policy = headers["Content-Security-Policy"]
+        self.assertIn("default-src 'self'", policy)
+        self.assertNotIn("unsafe-inline", policy)
 
     def post(self, body=b'{"action": "void_game"}', path=f"/api/action?token={TOKEN}",
              headers=None, server=None):

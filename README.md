@@ -100,16 +100,21 @@ language or a `tournament.language` without a table stops start-up and names the
 
 ## Organizer dashboard
 
-A web page for the organizer, served by the server process. It shows standings, the bots with the tables they
-hold, recent games, problems from `validate` and the latest audit entries, and refreshes itself. By default it is
-read-only.
+A web page for the organizer, served by the server process. The Overview shows a summary strip (bots responding,
+tables covered, last result, open problems), standings, the bots with the tables they hold and how long ago each
+last sent a signal (quiet after 45 s, no signal after 90 s), recent games with the winner marked by a stone, problems
+from `validate` (as a banner at the top) and the latest audit entries, and refreshes itself. It follows the system
+light or dark theme; the button in the header overrides it. By default it is read-only.
+
+The page is plain files in `webui/static/` (`index.html`, `dashboard.css`, `common.js`, `dashboard.js`), served from a fixed list
+at `/static/`, so the content security policy allows no inline script or style. Edit them directly; no build step.
 
 1. In `config.toml` set `[dashboard] enabled = true` (default: off, bound to `127.0.0.1:8080`).
 2. Put `DASHBOARD_TOKEN=<long random text>` in `.env`. The server refuses to start without it when the dashboard is on.
 3. Open `http://127.0.0.1:8080/?token=<the token>` once; the browser keeps it in an HttpOnly cookie after that.
 
-**Editing** is off until you set `allow_edit = true` under `[dashboard]`. The page then offers four actions, each asks
-for confirmation and goes through the same store as the admin CLI, so it is atomic and audit-logged with actor
+**Editing** is off until you set `allow_edit = true` under `[dashboard]`. The page then adds an Organizer tab and a Void button on each game; every action asks
+for confirmation in a dialog and goes through the same store as the admin CLI, so it is atomic and audit-logged with actor
 `dashboard`:
 
 - **Void / Restore** a game (it stays in the list, struck through, and can be restored; nothing is deleted).
@@ -194,7 +199,7 @@ network/   messages.py, ports.py, protocol.py, options.py, outbox.py, server_soc
 storage/   schema.sql, database.py, tournament_store.py, sqlite_repository.py, pair_adjust.py, models.py, errors.py, ...  (-> domain)
 referee/   html_dom.py, page_parser.py, lobby.py, driver.py, driver_port.py, browser.py, session.py, info_text.py, commands/
 serverapp/ claims.py, sessions.py, router.py, backup.py, bot_status.py, match_request.py (MATCH_RESULT and SET_SCORE packets)
-webui/     state.py, actions.py, http_server.py, page.py   (-> domain, config, storage)
+webui/     state.py, actions.py, assets.py, http_server.py, static/   (-> domain, config, storage)
 tools/     admin_db.py, seed_demo.py
 tests/     fake_playok/ (fake site for browser tests), test_*.py
 data/      *.db is git-ignored

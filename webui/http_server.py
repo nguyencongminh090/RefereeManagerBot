@@ -1,15 +1,15 @@
-"""HTTP front of the dashboard: token check, one JSON route and the static page."""
+"""HTTP front of the dashboard: token check, one JSON route and the static page files."""
 import hmac
 import json
 import logging
 import threading
 from http.cookies    import SimpleCookie
 from http.server     import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing          import Any, Dict, Optional, Protocol
+from typing          import Any, Dict, Optional, Protocol, Tuple
 from urllib.parse    import parse_qs, quote, unquote, urlsplit
 
 from config.process_config import DashboardConfig
-from webui.page            import PAGE_HTML
+from webui.assets          import ASSET_NAMES, INDEX_NAME, load_asset
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +17,9 @@ COOKIE_NAME      = "dashboard_token"
 _PAGE_PATH       = "/"
 _STATE_PATH      = "/api/state"
 _JSON_TYPE       = "application/json; charset=utf-8"
-_HTML_TYPE       = "text/html; charset=utf-8"
 _TEXT_TYPE       = "text/plain; charset=utf-8"
-_CSP             = "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+_STATIC_PREFIX   = "/static/"
+_CSP             = "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'"
 _ACTION_PATH     = "/api/action"
 _CSRF_HEADER     = "X-Dashboard-Action"
 _MAX_BODY_BYTES  = 4096
@@ -41,25 +41,37 @@ class ActionSource(Protocol):
         """Applies one action; raises ValueError (ActionError) with a message to show."""
 
 
-class _Settings:
-    """The values a request handler needs, bundled so the handler class stays closure-free."""
+class PageSettings:
+    """The values a request handler needs, bundled so the handler class stays closure-free.
 
-    def __init__(self, token: str, state: StateSource, refresh_seconds: float,
-                 actions: Optional[ActionSource]) -> None:
+    Attributes:
+        token: Shared secret the page must present; None makes the page public and read-only.
+        state: Source of the JSON-ready state.
+        refresh_seconds: Polling interval told to the page.
+        actions: Applies edit requests; None answers every action with 403.
+        index_name: The page served at `/`.
+        asset_names: The only files served under `/static/`.
+    """
+
+    def __init__(self, token: Optional[str], state: StateSource, refresh_seconds: float,
+                 actions: Optional[ActionSource], index_name: str = INDEX_NAME,
+                 asset_names: Tuple[str, ...] = ASSET_NAMES) -> None:
         self.token           = token
         self.state           = state
         self.refresh_seconds = refresh_seconds
         self.actions         = actions
+        self.index_name      = index_name
+        self.asset_names     = asset_names
 
 
-def _make_handler(settings: _Settings) -> type:
+def _make_handler(settings: PageSettings) -> type:
     class Handler(_DashboardHandler):
         config = settings
     return Handler
 
 
 class _DashboardHandler(BaseHTTPRequestHandler):
-    config: _Settings
+    config: PageSettings
 
     def do_GET(self) -> None:  # noqa: N802 (http.server naming)
         """Serves the page and the state after the token check."""
@@ -68,13 +80,18 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             return
         cookie = self._cookie_header(query_token)
         if url.path == _PAGE_PATH:
-            return self._reply(200, _HTML_TYPE, PAGE_HTML.encode("utf-8"), cookie)
+            return self._send_asset(self.config.index_name, cookie)
+        if url.path.startswith(_STATIC_PREFIX):
+            name = url.path[len(_STATIC_PREFIX):]
+            return self._send_asset(name if name in self.config.asset_names else "", cookie)
         if url.path == _STATE_PATH:
             return self._send_state(cookie)
         self._reply(404, _TEXT_TYPE, b"not found")
 
     def do_POST(self) -> None:  # noqa: N802 (http.server naming)
         """Applies an edit action after the token, CSRF and content checks."""
+        if self.config.token is None:                # the public page changes nothing
+            return self._reject_method()
         url, _ = self._authenticate()
         if url is None:
             return
@@ -94,6 +111,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     def _authenticate(self):
         """Returns (parsed URL, query token) for an authorized request, else replies 401."""
         url = urlsplit(self.path)
+        if self.config.token is None:
+            return url, ""
         query_token = (parse_qs(url.query).get("token") or [""])[0]
         if self._authorized(query_token):
             return url, query_token
@@ -149,6 +168,12 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
     do_PUT = do_DELETE = do_PATCH = do_HEAD = _reject_method
 
+    def _send_asset(self, name: str, cookie: Optional[str]) -> None:
+        asset = load_asset(name)
+        if asset is None:
+            return self._reply(404, _TEXT_TYPE, b"not found")
+        self._reply(200, asset.content_type, asset.body, cookie)
+
     def _send_state(self, cookie: Optional[str]) -> None:
         try:
             state = dict(self.config.state.snapshot())
@@ -198,8 +223,51 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         logger.debug("dashboard: %s " + format, self.client_address[0], *args)
 
 
-class DashboardServer:
-    """Serves the dashboard on a background thread until stopped."""
+class WebServer:
+    """Serves one page on a background thread until stopped."""
+
+    def __init__(self, bind: Tuple[str, int], settings: PageSettings, name: str) -> None:
+        """Binds the listening socket.
+
+        Args:
+            bind: Host and port to listen on.
+            settings: What the request handler serves and checks.
+            name: Thread and log name ("dashboard", "public page").
+
+        Raises:
+            OSError: If the address cannot be bound.
+        """
+        self._httpd   = ThreadingHTTPServer(bind, _make_handler(settings))
+        self._httpd.daemon_threads = True
+        self._name    = name
+        self._thread  = threading.Thread(
+            target=self._httpd.serve_forever, args=(_POLL_INTERVAL_SEC,), daemon=True,
+            name=name)
+        self._stopped = False
+
+    @property
+    def port(self) -> int:
+        """The TCP port actually bound (differs from the config when it says 0)."""
+        return self._httpd.server_address[1]
+
+    def start(self) -> None:
+        """Starts serving."""
+        self._thread.start()
+        logger.info("%s listening on %s:%s", self._name, *self._httpd.server_address[:2])
+
+    def stop(self) -> None:
+        """Stops serving and releases the port; safe to call twice."""
+        if self._stopped:
+            return
+        self._stopped = True
+        if self._thread.is_alive():          # shutdown() would wait forever on a loop never started
+            self._httpd.shutdown()
+            self._thread.join(_JOIN_TIMEOUT_SEC)
+        self._httpd.server_close()
+
+
+class DashboardServer(WebServer):
+    """The organizer dashboard: token-protected, with optional edit actions."""
 
     def __init__(self, config: DashboardConfig, token: str, state: StateSource,
                  actions: Optional[ActionSource] = None) -> None:
@@ -214,30 +282,5 @@ class DashboardServer:
         Raises:
             OSError: If the address cannot be bound.
         """
-        handler = _make_handler(_Settings(token, state, config.refresh_seconds, actions))
-        self._httpd   = ThreadingHTTPServer((config.host, config.port), handler)
-        self._httpd.daemon_threads = True
-        self._thread  = threading.Thread(
-            target=self._httpd.serve_forever, args=(_POLL_INTERVAL_SEC,), daemon=True,
-            name="dashboard")
-        self._stopped = False
-
-    @property
-    def port(self) -> int:
-        """The TCP port actually bound (differs from the config when it says 0)."""
-        return self._httpd.server_address[1]
-
-    def start(self) -> None:
-        """Starts serving."""
-        self._thread.start()
-        logger.info("dashboard listening on %s:%s", *self._httpd.server_address[:2])
-
-    def stop(self) -> None:
-        """Stops serving and releases the port; safe to call twice."""
-        if self._stopped:
-            return
-        self._stopped = True
-        if self._thread.is_alive():          # shutdown() would wait forever on a loop never started
-            self._httpd.shutdown()
-            self._thread.join(_JOIN_TIMEOUT_SEC)
-        self._httpd.server_close()
+        settings = PageSettings(token, state, config.refresh_seconds, actions)
+        super().__init__((config.host, config.port), settings, "dashboard")

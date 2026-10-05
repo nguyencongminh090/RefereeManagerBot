@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Referee dashboard</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <script src="/static/common.js" defer></script>
+    <script src="/static/dashboard.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="topbar">
+      <div class="topbar__title">
+        <h1 id="title">Referee dashboard</h1>
+        <p id="format" class="topbar__meta"></p>
+      </div>
+      <div class="topbar__tools">
+        <p id="status" class="pill pill--wait" role="status">
+          <span class="pill__dot" aria-hidden="true"></span>
+          <span id="status-text">Connecting</span>
+        </p>
+        <button id="theme-toggle" class="btn btn--quiet" type="button">Dark theme</button>
+      </div>
+    </header>
+
+    <div id="tabs" class="tabs" role="tablist" aria-label="Dashboard views" hidden>
+      <button id="tab-overview" class="tabs__tab" type="button" role="tab"
+              aria-controls="panel-overview" aria-selected="true">Overview</button>
+      <button id="tab-organizer" class="tabs__tab" type="button" role="tab"
+              aria-controls="panel-organizer" aria-selected="false" tabindex="-1">Organizer</button>
+    </div>
+
+    <main id="main" class="page">
+      <p id="flash" class="flash" role="status" aria-live="polite"></p>
+
+      <section id="problems-box" class="banner" aria-labelledby="problems-title" hidden>
+        <h2 id="problems-title" class="banner__title">Fix before the start</h2>
+        <ul id="problems" class="banner__list"></ul>
+      </section>
+
+      <div id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
+        <ul class="kpis" aria-label="Summary">
+          <li class="kpi" id="kpi-bots">
+            <span class="kpi__label">Bots online</span>
+            <strong class="kpi__value" id="kpi-bots-value">0</strong>
+            <span class="kpi__note" id="kpi-bots-note"></span>
+          </li>
+          <li class="kpi" id="kpi-tables">
+            <span class="kpi__label">Tables covered</span>
+            <strong class="kpi__value" id="kpi-tables-value">0</strong>
+            <span class="kpi__note" id="kpi-tables-note"></span>
+          </li>
+          <li class="kpi" id="kpi-last">
+            <span class="kpi__label">Last result</span>
+            <strong class="kpi__value" id="kpi-last-value">none</strong>
+            <span class="kpi__note" id="kpi-last-note"></span>
+          </li>
+          <li class="kpi" id="kpi-problems">
+            <span class="kpi__label">Open problems</span>
+            <strong class="kpi__value" id="kpi-problems-value">0</strong>
+            <span class="kpi__note" id="kpi-problems-note"></span>
+          </li>
+        </ul>
+
+        <div class="grid">
+          <section class="card" aria-labelledby="standings-title">
+            <h2 id="standings-title" class="card__title">Standings</h2>
+            <div id="standings" class="card__body"></div>
+          </section>
+          <section class="card" aria-labelledby="bots-title">
+            <h2 id="bots-title" class="card__title">Bots and tables</h2>
+            <div id="bots" class="card__body"></div>
+          </section>
+          <section class="card card--wide" aria-labelledby="games-title">
+            <h2 id="games-title" class="card__title">Recent games</h2>
+            <div id="games" class="card__body"></div>
+          </section>
+          <details class="card card--wide">
+            <summary class="card__title">Latest changes</summary>
+            <div id="audit" class="card__body"></div>
+          </details>
+        </div>
+      </div>
+
+      <div id="panel-organizer" role="tabpanel" aria-labelledby="tab-organizer" hidden>
+        <div class="grid">
+          <section class="card" aria-labelledby="pair-title">
+            <h2 id="pair-title" class="card__title">Correct a pair's score</h2>
+            <form id="pair-form" class="form">
+              <label class="field">Nickname 1
+                <input id="pair-p1" name="p1" autocomplete="off" required>
+              </label>
+              <label class="field">Nickname 2
+                <input id="pair-p2" name="p2" autocomplete="off" required>
+              </label>
+              <label class="field field--short">Points 1
+                <input id="pair-pts1" name="points1" type="number" min="0" step="0.5" required>
+              </label>
+              <label class="field field--short">Points 2
+                <input id="pair-pts2" name="points2" type="number" min="0" step="0.5" required>
+              </label>
+              <button class="btn btn--primary" type="submit">Set score</button>
+            </form>
+            <p class="hint">The pair's total becomes these points; corrective games are added to get there.</p>
+          </section>
+
+          <section class="card" aria-labelledby="sd-title">
+            <h2 id="sd-title" class="card__title">Sudden death</h2>
+            <form id="sd-form" class="form">
+              <label class="field">Winner
+                <select id="sd-winner" name="winner"></select>
+              </label>
+              <label class="field">Loser
+                <select id="sd-loser" name="loser"></select>
+              </label>
+              <button class="btn btn--primary" type="submit">Record decider</button>
+            </form>
+            <div id="sd-list" class="card__body"></div>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <dialog id="confirm" class="dialog" aria-labelledby="confirm-text">
+      <form method="dialog" class="dialog__form">
+        <p id="confirm-text" class="dialog__text"></p>
+        <div class="dialog__actions">
+          <button class="btn" type="submit" value="cancel">Cancel</button>
+          <button id="confirm-ok" class="btn btn--primary" type="submit" value="ok">Confirm</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>
