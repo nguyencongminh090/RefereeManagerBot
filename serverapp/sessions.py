@@ -69,6 +69,13 @@ class SessionRegistry:
         with self._lock:
             return [a for a, s in self._sessions.items() if s.name is not None]
 
+    def snapshot(self) -> List[Tuple[Addr, str, float]]:
+        """Lists (address, bot name, idle seconds) of the authenticated connections."""
+        now = self._clock()
+        with self._lock:
+            return [(addr, s.name, now - s.last_seen)
+                    for addr, s in self._sessions.items() if s.name is not None]
+
     def pop_expired(self) -> List[Tuple[Addr, str]]:
         """Removes and returns connections that missed the auth deadline or went silent.
 
