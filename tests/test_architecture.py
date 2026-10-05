@@ -19,7 +19,8 @@ ALLOWED_IMPORTS: Dict[str, Set[str]] = {
     "storage"  : {"domain"},
     "referee"  : {"domain", "config", "network"},
     "serverapp": {"domain", "config", "network", "storage"},
-    "server"   : {"domain", "config", "network", "storage", "serverapp"},
+    "webui"    : {"domain", "config", "storage"},
+    "server"   : {"domain", "config", "network", "storage", "serverapp", "webui"},
     "client"   : {"domain", "config", "network", "referee"},
     "tools"    : {"domain", "config", "storage"},
 }
