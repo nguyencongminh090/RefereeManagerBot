@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from config.settings import ConfigError, ConfigLoader, parse_env_file
@@ -42,12 +43,17 @@ class ConfigTests(unittest.TestCase):
 
     def test_stats_table_is_typed(self):
         s = self.load()
-        self.assertEqual(("https://www.playok.com/en/stat.phtml", "gm", "UTC", 5.0),
+        self.assertEqual(("https://www.playok.com/en/stat.phtml", "gm", "Etc/GMT-1", 5.0),
                          (s.stats.url, s.stats.game_code, s.stats.timezone, s.stats.timeout_seconds))
-        self.assertEqual("UTC", str(s.stats.tzinfo))
+
+    def test_stats_dates_are_utc_plus_one_all_year(self):
+        # PlayOK's stats page writes UTC+1 also in summer; its game records use Warsaw time (+2 then).
+        zone = self.load().stats.tzinfo
+        for month in (1, 7):
+            self.assertEqual(timedelta(hours=1), datetime(2026, month, 15, 12, tzinfo=zone).utcoffset())
 
     def test_stats_keys_are_validated(self):
-        self.text = (self.text.replace('timezone        = "UTC"', 'timezone        = "Mars/Base"')
+        self.text = (self.text.replace('timezone        = "Etc/GMT-1"', 'timezone        = "Mars/Base"')
                               .replace("\ntimeout_seconds = 5", "\ntimeout_seconds = 0"))
         found = self.problems()
         self.assertTrue(any("stats.timezone" in p for p in found), found)
