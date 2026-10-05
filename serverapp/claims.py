@@ -51,3 +51,8 @@ class ClaimRegistry:
         """Returns the connection that holds the table, or None."""
         with self._lock:
             return self._owners.get(table_no)
+
+    def tables_of(self, addr: Addr) -> Tuple[int, ...]:
+        """Returns the tables held by a connection, ascending."""
+        with self._lock:
+            return tuple(sorted(t for t, owner in self._owners.items() if owner == addr))

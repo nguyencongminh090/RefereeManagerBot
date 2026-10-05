@@ -1,7 +1,7 @@
 """Ports of the score store: what the server needs from a repository of results."""
 from abc         import ABC, abstractmethod
 from dataclasses import dataclass
-from typing      import Any, Dict, List, Optional
+from typing      import Any, Dict, List, Optional, Tuple
 
 from domain.types import GameResult
 
@@ -110,3 +110,27 @@ class ITeamRepository(IScoreSubject):
     @abstractmethod
     def snapshot(self) -> str:
         """Returns the standings as one line of text."""
+
+
+@dataclass(frozen=True)
+class BotStatus:
+    """A connected referee bot as the organizer sees it.
+
+    Attributes:
+        name: Bot name from its AUTH packet.
+        address: "host:port" of the connection.
+        tables: Table numbers the bot holds, ascending.
+        idle_seconds: Seconds since the last packet from the bot.
+    """
+    name        : str
+    address     : str
+    tables      : Tuple[int, ...]
+    idle_seconds: float
+
+
+class IBotStatusSource(ABC):
+    """Read-only view of the referee bots currently connected."""
+
+    @abstractmethod
+    def bots(self) -> List[BotStatus]:
+        """Returns the authenticated bots, ordered by name."""

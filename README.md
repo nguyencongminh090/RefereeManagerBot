@@ -20,7 +20,8 @@ referee bot ...                              --TCP-->
 - `referee/`: the client side. `html_dom.py` and `page_parser.py` (stdlib HTML parsing of chat, seats, lobby),
   `driver.py` (`SeleniumDriver`, port in `driver_port.py`), `browser.py` (Firefox factory), `lobby.py`, `session.py`
   (`MatchSession`), `info_text.py` (which game-count text to write), `commands/` (chat commands).
-- `serverapp/`: server-side parts (sessions, claims, router, backup).
+- `serverapp/`: server-side parts (sessions, claims, router, backup, `BotStatusProvider`).
+- `webui/`: the organizer dashboard (web page served by the server process; edit actions are opt-in).
 - `config/`: `ConfigLoader`, `messages.py` (chat texts per language) and `config.example.toml`.
 - `tools/admin_db.py`: admin CLI for the database.
 
@@ -28,7 +29,8 @@ referee bot ...                              --TCP-->
 
 1. Python >= 3.11. `pip install -r requirements.txt` (only selenium, needed by the client; the server and tests do not need it).
 2. `cp config/config.example.toml config/config.toml` and edit it (rules, selectors, texts, ports). Unknown or missing keys stop start-up with a message.
-3. Create `.env` (git-ignored) with the secrets: `PLAYOK_USER`, `PLAYOK_PASS`, `BOT_TOKEN`.
+3. Create `.env` (git-ignored) with the secrets: `PLAYOK_USER`, `PLAYOK_PASS`, `BOT_TOKEN`
+   (and `DASHBOARD_TOKEN` when `[dashboard] enabled = true`).
    Real environment variables override `.env`. Use `--config` or `REFEREE_CONFIG` for another config file.
 
 ## Chat commands
@@ -96,6 +98,30 @@ language or a `tournament.language` without a table stops start-up and names the
 - **Never commit** saved PlayOK pages, rosters or databases (they hold real names and chat). `.gitignore` lists the
   known ones. If a password was ever committed, rotate it: removing the file does not remove it from git history.
 
+## Organizer dashboard
+
+A web page for the organizer, served by the server process. It shows standings, the bots with the tables they
+hold, recent games, problems from `validate` and the latest audit entries, and refreshes itself. By default it is
+read-only.
+
+1. In `config.toml` set `[dashboard] enabled = true` (default: off, bound to `127.0.0.1:8080`).
+2. Put `DASHBOARD_TOKEN=<long random text>` in `.env`. The server refuses to start without it when the dashboard is on.
+3. Open `http://127.0.0.1:8080/?token=<the token>` once; the browser keeps it in an HttpOnly cookie after that.
+
+**Editing** is off until you set `allow_edit = true` under `[dashboard]`. The page then offers four actions, each asks
+for confirmation and goes through the same store as the admin CLI, so it is atomic and audit-logged with actor
+`dashboard`:
+
+- **Void / Restore** a game (it stays in the list, struck through, and can be restored; nothing is deleted).
+- **Correct a pair's score**: same effect as `!set` (adds corrective games until the pair has the points you give).
+- **Record / Remove a sudden-death decider** between two tied entrants.
+
+After each change the server sends the new standings to the bots, as it does after a bot result. Anyone with the token
+can make these changes, and the audit log shows only `dashboard`, not who. Edit requests are `POST /api/action` with a
+JSON body, the `X-Dashboard-Action: 1` header and a matching `Origin` (browsers cannot send that cross-site).
+Like the bot port it is plain HTTP and the page lists real nicknames, so keep `host = "127.0.0.1"` (reach it through
+an SSH tunnel) or bind a private network only.
+
 ## Running
 
 Server:
@@ -103,6 +129,9 @@ Server:
 ```
 python3 server.py [--config config/config.toml] [--env .env] [--log-level INFO]
 ```
+
+The server exits with code 2 when the config or secrets are wrong, and with code 3 when it cannot start although the config
+is fine (for example the bot port or the dashboard port is already in use); both print a short message, not a traceback.
 
 Run a referee bot (needs `pip install -r requirements.txt`, Firefox with geckodriver, and PLAYOK_USER, PLAYOK_PASS, BOT_TOKEN in `.env`):
 
@@ -160,11 +189,12 @@ differs the fake should be corrected and a test added.
 ```
 server.py  client.py
 domain/    types.py, ports.py                      (stdlib only)
-config/    settings.py, messages.py, reader.py, config.example.toml  (-> domain)
+config/    settings.py, process_config.py, messages.py, reader.py, config.example.toml  (-> domain)
 network/   messages.py, ports.py, protocol.py, options.py, outbox.py, server_socket.py, client_socket.py
 storage/   schema.sql, database.py, tournament_store.py, sqlite_repository.py, pair_adjust.py, models.py, errors.py, ...  (-> domain)
 referee/   html_dom.py, page_parser.py, lobby.py, driver.py, driver_port.py, browser.py, session.py, info_text.py, commands/
-serverapp/ claims.py, sessions.py, router.py, backup.py, match_request.py (MATCH_RESULT and SET_SCORE packets)
+serverapp/ claims.py, sessions.py, router.py, backup.py, bot_status.py, match_request.py (MATCH_RESULT and SET_SCORE packets)
+webui/     state.py, actions.py, http_server.py, page.py   (-> domain, config, storage)
 tools/     admin_db.py, seed_demo.py
 tests/     fake_playok/ (fake site for browser tests), test_*.py
 data/      *.db is git-ignored
