@@ -50,3 +50,6 @@ data/*.tmp
 # Rosters and local config
 data/*.csv
 config/config.toml
+
+# CodeGraph index
+.codegraph/
