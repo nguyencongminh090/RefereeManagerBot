@@ -48,8 +48,8 @@ class AuthHandler:
 
     def on_auth(self, addr: Addr, packet: Dict[str, Any]) -> None:
         """Authenticates the bot when the token matches, otherwise refuses and closes the link."""
-        data  = packet.get('data') or {}
-        token = str(data.get('token') or "")
+        data     = packet.get('data') or {}
+        token    = str(data.get('token') or "")
         expected = self._options.bot_token
         if not expected or not hmac.compare_digest(token.encode(), expected.encode()):
             return self._reject(addr)
