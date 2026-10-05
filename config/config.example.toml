@@ -17,6 +17,16 @@ auth_timeout_seconds = 5           # a connection must send a valid AUTH within 
 auth_max_failures = 5              # failed AUTH from one IP address before it is locked out
 auth_lockout_seconds = 60          # failures are counted in this window; the lockout lasts as long
 
+[dashboard]
+enabled         = false        # serve the organizer web page from the server process
+host            = "127.0.0.1"  # 0.0.0.0 only on a trusted network; the page lists nicknames
+port            = 8080
+refresh_seconds = 5            # how often the page polls the server
+recent_games    = 20           # rows in "recent games"
+audit_entries   = 20           # rows in "latest changes"
+allow_edit      = false        # true adds buttons to void a game, correct a pair score, record sudden death
+# when enabled, put DASHBOARD_TOKEN in .env: the page asks for it as ?token=...
+
 [database]
 path       = "data/tournament.db"
 # optional: roster CSV loaded at start-up (re-loading is safe)

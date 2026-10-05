@@ -20,6 +20,7 @@ from typing      import Dict, List, Mapping, Optional, Pattern, Tuple
 from zoneinfo    import ZoneInfo, ZoneInfoNotFoundError
 
 from config.messages import MessagesConfig, MessageTexts, load_messages
+from config.process_config import ClientConfig, DashboardConfig, DatabaseConfig, ServerConfig
 from config.reader import ConfigError, Section, parse_env_file
 from domain.types import Scoring
 
@@ -43,72 +44,7 @@ PATTERNS     = {"win_p1": (), "win_p2": (), "draw": (), "timeout": ("seat",),
                 "invitation": ("user", "elo", "table", "info"),
                 "table_header": ("table", "time")}
 SECRET_KEYS  = {"client": ("PLAYOK_USER", "PLAYOK_PASS", "BOT_TOKEN"), "server": ("BOT_TOKEN",)}
-
-
-@dataclass(frozen=True)
-class ServerConfig:
-    """The `[server]` table.
-
-    Attributes:
-        host: Interface to bind.
-        port: TCP port, 1 or more.
-        heartbeat_seconds: Heartbeat interval announced to bots.
-        backup_seconds: Seconds between database backups.
-        max_packet_bytes: Largest accepted packet body, in bytes.
-        max_clients: Simultaneous connections allowed.
-        send_timeout_seconds: Seconds a send to one bot may block.
-        auth_timeout_seconds: Seconds a new connection has to authenticate.
-        auth_max_failures: Failed authentications per address before lockout.
-        auth_lockout_seconds: Failure window and lockout length, in seconds.
-    """
-    host             : str
-    port             : int
-    heartbeat_seconds: float
-    backup_seconds   : float
-    max_packet_bytes     : int
-    max_clients          : int
-    send_timeout_seconds : float
-    auth_timeout_seconds : float
-    auth_max_failures    : int
-    auth_lockout_seconds : float
-
-
-@dataclass(frozen=True)
-class DatabaseConfig:
-    """The `[database]` table.
-
-    Attributes:
-        path: SQLite file.
-        teams_file: Roster CSV imported at start-up, or None.
-    """
-    path      : str
-    teams_file: Optional[str]
-
-
-@dataclass(frozen=True)
-class ClientConfig:
-    """The `[client]` table.
-
-    Attributes:
-        server_host: Host of the central server.
-        server_port: Port of the central server.
-        poll_seconds: Seconds between chat polls.
-        reconnect_max_seconds: Upper bound of the reconnect backoff.
-        join_mode: One of JOIN_MODES.
-        lobby_scan_seconds: Seconds between lobby scans.
-        outbox_path: File for unconfirmed results; empty keeps them in memory.
-        max_pending_results: Finished games kept while the player names cannot be read.
-        unreadable_polls_before_alert: Polls with unsent games before the log escalates.
-    """
-    server_host          : str
-    server_port          : int
-    poll_seconds         : float
-    reconnect_max_seconds: float
-    join_mode            : str
-    lobby_scan_seconds   : float
-    outbox_path          : str
-    max_pending_results  : int
-    unreadable_polls_before_alert: int
+DASHBOARD_TOKEN_KEY = "DASHBOARD_TOKEN"   # required by the server only when the dashboard is enabled
 
 
 @dataclass(frozen=True)
@@ -251,6 +187,7 @@ class Secrets:
     playok_user: Optional[str] = field(default=None, repr=False)
     playok_pass: Optional[str] = field(default=None, repr=False)
     bot_token  : Optional[str] = field(default=None, repr=False)
+    dashboard_token: Optional[str] = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -259,6 +196,7 @@ class Settings:
 
     Attributes:
         server: `[server]` table.
+        dashboard: `[dashboard]` table.
         database: `[database]` table.
         client: `[client]` table.
         tournament: `[tournament]` table.
@@ -270,6 +208,7 @@ class Settings:
         source: Path of the config file read.
     """
     server    : ServerConfig
+    dashboard : DashboardConfig
     database  : DatabaseConfig
     client    : ClientConfig
     tournament: TournamentConfig
@@ -351,6 +290,13 @@ class ConfigLoader:
             server.number("auth_lockout_seconds", 0, True))
         server.finish()
 
+        dash = root.table("dashboard")
+        dashboard_cfg = DashboardConfig(
+            dash.boolean("enabled"), dash.text("host"), dash.integer("port", 1),
+            dash.number("refresh_seconds", 0, True), dash.integer("recent_games", 1),
+            dash.integer("audit_entries", 1), dash.boolean("allow_edit"))
+        dash.finish()
+
         db = root.table("database")
         db_cfg = DatabaseConfig(db.text("path"), db.optional_text("teams_file"))
         db.finish()
@@ -380,17 +326,20 @@ class ConfigLoader:
         root.finish()
 
         file_values = parse_env_file(env_file)
-        known = {name for names in SECRET_KEYS.values() for name in names}
+        known = {name for names in SECRET_KEYS.values() for name in names} | {DASHBOARD_TOKEN_KEY}
         # An empty environment variable never hides the file value.
         merged = {**file_values, **{k: v for k, v in env.items() if k in known and v}}
-        for key in SECRET_KEYS.get(role, ()):
+        required = SECRET_KEYS.get(role, ())
+        if role == "server" and dashboard_cfg.enabled:
+            required += (DASHBOARD_TOKEN_KEY,)
+        for key in required:
             if not merged.get(key):
                 problems.append(
                     f"secret {key} is not set (put it in {env_file} or the environment)")
         secrets = Secrets(merged.get("PLAYOK_USER"), merged.get("PLAYOK_PASS"),
-                          merged.get("BOT_TOKEN"))
+                          merged.get("BOT_TOKEN"), merged.get(DASHBOARD_TOKEN_KEY))
 
-        return Settings(server_cfg, db_cfg, client_cfg, tournament_cfg, commands_cfg, playok_cfg,
+        return Settings(server_cfg, dashboard_cfg, db_cfg, client_cfg, tournament_cfg, commands_cfg, playok_cfg,
                         stats_cfg, messages_cfg, secrets, source)
 
     @staticmethod
