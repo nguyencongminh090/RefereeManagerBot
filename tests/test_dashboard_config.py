@@ -37,16 +37,16 @@ class DashboardConfigTests(unittest.TestCase):
         self.assertTrue(self.load().dashboard.allow_edit)
 
     def test_enabled_without_token_is_refused_for_the_server(self):
-        self.text = self.text.replace("enabled         = false", "enabled         = true")
+        self.text = self.text.replace("[dashboard]\nenabled         = false", "[dashboard]\nenabled         = true")
         self.assertTrue(any("DASHBOARD_TOKEN" in p for p in self.problems()))
 
     def test_enabled_with_token_loads_it(self):
-        self.text = self.text.replace("enabled         = false", "enabled         = true")
+        self.text = self.text.replace("[dashboard]\nenabled         = false", "[dashboard]\nenabled         = true")
         settings = self.load(environ={"BOT_TOKEN": "t", "DASHBOARD_TOKEN": "secret"})
         self.assertEqual("secret", settings.secrets.dashboard_token)
 
     def test_enabled_does_not_need_a_token_for_the_client(self):
-        self.text = self.text.replace("enabled         = false", "enabled         = true")
+        self.text = self.text.replace("[dashboard]\nenabled         = false", "[dashboard]\nenabled         = true")
         self.assertTrue(self.load(role="client", environ={
             "PLAYOK_USER": "u", "PLAYOK_PASS": "p", "BOT_TOKEN": "t"}).dashboard.enabled)
 

@@ -20,7 +20,8 @@ from typing      import Dict, List, Mapping, Optional, Pattern, Tuple
 from zoneinfo    import ZoneInfo, ZoneInfoNotFoundError
 
 from config.messages import MessagesConfig, MessageTexts, load_messages
-from config.process_config import ClientConfig, DashboardConfig, DatabaseConfig, ServerConfig
+from config.process_config import (ClientConfig, DashboardConfig, DatabaseConfig, PublicConfig,
+                                    ServerConfig)
 from config.reader import ConfigError, Section, parse_env_file
 from domain.types import Scoring
 
@@ -197,6 +198,7 @@ class Settings:
     Attributes:
         server: `[server]` table.
         dashboard: `[dashboard]` table.
+        public: `[public]` table.
         database: `[database]` table.
         client: `[client]` table.
         tournament: `[tournament]` table.
@@ -209,6 +211,7 @@ class Settings:
     """
     server    : ServerConfig
     dashboard : DashboardConfig
+    public    : PublicConfig
     database  : DatabaseConfig
     client    : ClientConfig
     tournament: TournamentConfig
@@ -297,6 +300,13 @@ class ConfigLoader:
             dash.integer("audit_entries", 1), dash.boolean("allow_edit"))
         dash.finish()
 
+        pub = root.table("public")
+        public_cfg = PublicConfig(
+            pub.boolean("enabled"), pub.text("host"), pub.integer("port", 1),
+            pub.number("refresh_seconds", 0, True), pub.integer("recent_games", 1))
+        pub.finish()
+        ConfigLoader._check_page_ports(dashboard_cfg, public_cfg, problems)
+
         db = root.table("database")
         db_cfg = DatabaseConfig(db.text("path"), db.optional_text("teams_file"))
         db.finish()
@@ -339,8 +349,16 @@ class ConfigLoader:
         secrets = Secrets(merged.get("PLAYOK_USER"), merged.get("PLAYOK_PASS"),
                           merged.get("BOT_TOKEN"), merged.get(DASHBOARD_TOKEN_KEY))
 
-        return Settings(server_cfg, dashboard_cfg, db_cfg, client_cfg, tournament_cfg, commands_cfg, playok_cfg,
+        return Settings(server_cfg, dashboard_cfg, public_cfg, db_cfg, client_cfg, tournament_cfg, commands_cfg, playok_cfg,
                         stats_cfg, messages_cfg, secrets, source)
+
+    @staticmethod
+    def _check_page_ports(dashboard: DashboardConfig, public: PublicConfig,
+                          problems: List[str]) -> None:
+        if dashboard.enabled and public.enabled and (dashboard.host, dashboard.port) == (
+                public.host, public.port):
+            problems.append(f"'public.port' is {public.port}, the same address as the dashboard; "
+                            "give the two pages different ports")
 
     @staticmethod
     def _tournament(t: Section, problems: List[str]) -> TournamentConfig:

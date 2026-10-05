@@ -21,7 +21,7 @@ referee bot ...                              --TCP-->
   `driver.py` (`SeleniumDriver`, port in `driver_port.py`), `browser.py` (Firefox factory), `lobby.py`, `session.py`
   (`MatchSession`), `info_text.py` (which game-count text to write), `commands/` (chat commands).
 - `serverapp/`: server-side parts (sessions, claims, router, backup, `BotStatusProvider`).
-- `webui/`: the organizer dashboard (web page served by the server process; edit actions are opt-in).
+- `webui/`: the organizer dashboard and the read-only public page (served by the server process; edit actions are opt-in).
 - `config/`: `ConfigLoader`, `messages.py` (chat texts per language) and `config.example.toml`.
 - `tools/admin_db.py`: admin CLI for the database.
 
@@ -106,7 +106,7 @@ last sent a signal (quiet after 45 s, no signal after 90 s), recent games with t
 from `validate` (as a banner at the top) and the latest audit entries, and refreshes itself. It follows the system
 light or dark theme; the button in the header overrides it. By default it is read-only.
 
-The page is plain files in `webui/static/` (`index.html`, `dashboard.css`, `common.js`, `dashboard.js`), served from a fixed list
+The page is plain files in `webui/static/` (`index.html`, `public.html`, `dashboard.css`, `common.js`, `dashboard.js`, `public.js`), served from a fixed list
 at `/static/`, so the content security policy allows no inline script or style. Edit them directly; no build step.
 
 1. In `config.toml` set `[dashboard] enabled = true` (default: off, bound to `127.0.0.1:8080`).
@@ -126,6 +126,23 @@ can make these changes, and the audit log shows only `dashboard`, not who. Edit 
 JSON body, the `X-Dashboard-Action: 1` header and a matching `Origin` (browsers cannot send that cross-site).
 Like the bot port it is plain HTTP and the page lists real nicknames, so keep `host = "127.0.0.1"` (reach it through
 an SSH tunnel) or bind a private network only.
+
+## Public page for the audience
+
+A second, read-only page for viewers, on its own port, with no token and no way to change anything. It shows the
+standings, the latest results (real PlayOK nicknames, voided games left out) and the numbers of the tables the bots
+are covering. It never shows bot names or addresses, game ids, validation problems, the audit log or any edit tool, and
+it serves only its own scripts (`common.js`, `public.js`), not the organizer's. Changes are refused with 405.
+
+1. In `config.toml` set `[public] enabled = true` (default: off, bound to `127.0.0.1:8081`; the port must differ from
+   the dashboard's).
+2. Open `http://127.0.0.1:8081/`. No secret is needed.
+3. To let people outside the machine see it, keep `host = "127.0.0.1"` and put a tunnel or reverse proxy with HTTPS in
+   front (for example Cloudflare Tunnel, Caddy or nginx pointing at port 8081), or bind `0.0.0.0` on a trusted network
+   only. The server speaks plain HTTP itself.
+
+One snapshot is built per `refresh_seconds / 2` and shared by every viewer, so a large audience costs the database a
+few reads, not one per viewer. Because the page shows real nicknames, tell players before you publish the link.
 
 ## Running
 
@@ -199,7 +216,7 @@ network/   messages.py, ports.py, protocol.py, options.py, outbox.py, server_soc
 storage/   schema.sql, database.py, tournament_store.py, sqlite_repository.py, pair_adjust.py, models.py, errors.py, ...  (-> domain)
 referee/   html_dom.py, page_parser.py, lobby.py, driver.py, driver_port.py, browser.py, session.py, info_text.py, commands/
 serverapp/ claims.py, sessions.py, router.py, backup.py, bot_status.py, match_request.py (MATCH_RESULT and SET_SCORE packets)
-webui/     state.py, actions.py, assets.py, http_server.py, static/   (-> domain, config, storage)
+webui/     state.py, public_state.py, actions.py, assets.py, http_server.py, public_server.py, static/   (-> domain, config, storage)
 tools/     admin_db.py, seed_demo.py
 tests/     fake_playok/ (fake site for browser tests), test_*.py
 data/      *.db is git-ignored

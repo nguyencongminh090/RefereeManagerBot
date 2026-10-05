@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Tournament results</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <script src="/static/common.js" defer></script>
+    <script src="/static/public.js" defer></script>
+  </head>
+  <body class="public">
+    <a class="skip-link" href="#main">Skip to results</a>
+
+    <header class="topbar">
+      <div class="topbar__title">
+        <h1 id="title">Tournament results</h1>
+        <p id="format" class="topbar__meta"></p>
+      </div>
+      <div class="topbar__tools">
+        <p id="status" class="pill pill--wait" role="status">
+          <span class="pill__dot" aria-hidden="true"></span>
+          <span id="status-text">Connecting</span>
+        </p>
+        <button id="theme-toggle" class="btn btn--quiet" type="button">Dark theme</button>
+      </div>
+    </header>
+
+    <main id="main" class="page">
+      <section class="card" aria-labelledby="live-title">
+        <h2 id="live-title" class="card__title">Tables in play</h2>
+        <div id="live-tables" class="card__body"></div>
+      </section>
+
+      <div class="grid">
+        <section class="card" aria-labelledby="standings-title">
+          <h2 id="standings-title" class="card__title">Standings</h2>
+          <div id="standings" class="card__body"></div>
+        </section>
+        <section class="card" aria-labelledby="games-title">
+          <h2 id="games-title" class="card__title">Latest results</h2>
+          <div id="games" class="card__body"></div>
+        </section>
+      </div>
+
+      <p class="hint">This page updates by itself. Times are UTC.</p>
+    </main>
+  </body>
+</html>

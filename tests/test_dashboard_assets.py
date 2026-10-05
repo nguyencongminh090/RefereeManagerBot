@@ -1,11 +1,12 @@
 import unittest
 
-from webui.assets import ASSET_NAMES, INDEX_NAME, load_asset
+from webui.assets import (ASSET_NAMES, INDEX_NAME, PUBLIC_ASSET_NAMES, PUBLIC_INDEX_NAME,
+                          load_asset)
 
 
 class DashboardAssetsTests(unittest.TestCase):
     def test_every_listed_asset_is_loaded_with_a_content_type(self):
-        for name in ASSET_NAMES:
+        for name in ASSET_NAMES + PUBLIC_ASSET_NAMES + (INDEX_NAME, PUBLIC_INDEX_NAME):
             asset = load_asset(name)
             self.assertIsNotNone(asset, name)
             self.assertTrue(asset.body, name)
@@ -20,8 +21,19 @@ class DashboardAssetsTests(unittest.TestCase):
         self.assertIn("/static/dashboard.css", page)
         self.assertIn("/static/dashboard.js", page)
 
-    def test_page_has_no_inline_script_or_style(self):
-        page = load_asset(INDEX_NAME).body.decode("utf-8")
-        self.assertNotIn("<style", page)
-        self.assertNotIn(" style=", page)
-        self.assertNotRegex(page, r"<script(?![^>]*\bsrc=)")
+    def test_public_page_links_only_public_assets(self):
+        page = load_asset(PUBLIC_INDEX_NAME).body.decode("utf-8")
+        self.assertIn("/static/public.js", page)
+        self.assertNotIn("dashboard.js", page)
+
+    def test_pages_have_no_inline_script_or_style(self):
+        for name in (INDEX_NAME, PUBLIC_INDEX_NAME):
+            page = load_asset(name).body.decode("utf-8")
+            self.assertNotIn("<style", page, name)
+            self.assertNotIn(" style=", page, name)
+            self.assertNotRegex(page, r"<script(?![^>]*\bsrc=)", name)
+
+    def test_public_scripts_hold_no_organizer_endpoint(self):
+        for name in PUBLIC_ASSET_NAMES:
+            if name.endswith(".js"):
+                self.assertNotIn("/api/action", load_asset(name).body.decode("utf-8"), name)

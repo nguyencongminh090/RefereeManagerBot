@@ -32,8 +32,10 @@ class ServerStartupTests(unittest.TestCase):
         self.occupant = Occupant()
         self.addCleanup(self.occupant.close)
 
-    def paths(self, server_port=None, dashboard_port=None):
-        ports = ServerPorts(server_port or free_port(), dashboard_port or free_port())
+    def paths(self, server_port=None, dashboard_port=None, public_port=None):
+        ports = ServerPorts(server_port or free_port(), dashboard_port or free_port(),
+                            public=public_port or free_port(),
+                            public_enabled=public_port is not None)
         return write_server_config(self.folder.name, ports)
 
     def settings(self, **ports):
@@ -47,6 +49,15 @@ class ServerStartupTests(unittest.TestCase):
         self.assertIn("dashboard", message)
         self.assertIn(str(self.occupant.port), message)
         self.assertIn("[dashboard]", message)
+
+    def test_busy_public_port_is_a_startup_error_and_frees_the_dashboard_port(self):
+        dashboard_port = free_port()
+        with self.assertRaises(StartupError) as ctx:
+            Server(self.settings(dashboard_port=dashboard_port, public_port=self.occupant.port))
+        self.assertIn("[public]", str(ctx.exception))
+        self.assertIn(str(self.occupant.port), str(ctx.exception))
+        with socket.socket() as probe:                 # the dashboard released its port
+            probe.bind(("127.0.0.1", dashboard_port))
 
     def test_busy_bot_port_is_a_startup_error_naming_the_port(self):
         server = Server(self.settings(server_port=self.occupant.port))

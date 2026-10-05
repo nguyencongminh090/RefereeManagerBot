@@ -36,7 +36,8 @@ Update `ALLOWED_IMPORTS` there if you add a package or a dependency edge.
 - `storage/`: SQLite schema/migrations, `TournamentStore`, `SqliteTeamRepository`. The `games` table is the source of truth;
   standings are derived. Idempotent by game id.
 - `serverapp/`: server-side sessions, table claims, message router, backup, bot status for the dashboard.
-- `webui/`: organizer dashboard (stdlib HTTP, token auth) started by `Server`; reads `storage` and the
+- `webui/`: organizer dashboard (stdlib HTTP, token auth) and the token-less read-only public page (`[public]`,
+  `public_state.py` holds only audience data), both started by `Server`; page files are in `webui/static/`; reads `storage` and the
   `IBotStatusSource` port. Read-only unless `[dashboard] allow_edit`; edits (void game, pair score, sudden death) go
   through `TournamentStore` with actor `dashboard`.
 - `referee/`: client side. Page parsing (`html_dom.py`, `page_parser.py`) is stdlib-only and testable against saved PlayOK

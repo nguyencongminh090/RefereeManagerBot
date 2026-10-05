@@ -1,4 +1,4 @@
-"""Config tables of the processes: server, dashboard, database and client (`[server]` and so on)."""
+"""Config tables of the processes: server, dashboard, public page, database and client (`[server]` and so on)."""
 from dataclasses import dataclass
 from typing      import Optional
 
@@ -51,6 +51,24 @@ class DashboardConfig:
     recent_games   : int
     audit_entries  : int
     allow_edit     : bool
+
+
+@dataclass(frozen=True)
+class PublicConfig:
+    """The `[public]` table: the read-only page for the audience.
+
+    Attributes:
+        enabled: Whether the server serves the public page.
+        host: Interface to bind.
+        port: TCP port, 1 or more; must differ from the dashboard's when both are on.
+        refresh_seconds: How often the page polls, and how long one snapshot is reused.
+        recent_games: Rows in the recent-results list.
+    """
+    enabled        : bool
+    host           : str
+    port           : int
+    refresh_seconds: float
+    recent_games   : int
 
 
 @dataclass(frozen=True)

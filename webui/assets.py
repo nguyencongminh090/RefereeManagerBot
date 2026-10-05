@@ -6,6 +6,8 @@ from typing      import Dict, Optional, Tuple
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_NAME = "index.html"
 ASSET_NAMES = ("dashboard.css", "common.js", "dashboard.js")
+PUBLIC_INDEX_NAME = "public.html"
+PUBLIC_ASSET_NAMES = ("dashboard.css", "common.js", "public.js")   # never the organizer script
 
 _CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -27,7 +29,8 @@ class Asset:
 
 
 def _read_all() -> Dict[str, Asset]:
-    names: Tuple[str, ...] = (INDEX_NAME,) + ASSET_NAMES
+    names: Tuple[str, ...] = (INDEX_NAME, PUBLIC_INDEX_NAME) + tuple(
+        dict.fromkeys(ASSET_NAMES + PUBLIC_ASSET_NAMES))
     return {name: Asset((STATIC_DIR / name).read_bytes(), _CONTENT_TYPES[Path(name).suffix])
             for name in names}
 

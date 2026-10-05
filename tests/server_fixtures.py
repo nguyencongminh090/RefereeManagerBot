@@ -18,11 +18,15 @@ class ServerPorts:
         dashboard: Port of the dashboard.
         dashboard_enabled: Whether `[dashboard] enabled` is true.
         allow_edit: Whether `[dashboard] allow_edit` is true.
+        public: Port of the public page.
+        public_enabled: Whether `[public] enabled` is true.
     """
     server           : int
     dashboard        : int
     dashboard_enabled: bool = True
     allow_edit       : bool = False
+    public           : int  = 0
+    public_enabled   : bool = False
 
 
 def write_server_config(folder: str, ports: ServerPorts) -> Tuple[str, str]:
@@ -38,9 +42,13 @@ def write_server_config(folder: str, ports: ServerPorts) -> Tuple[str, str]:
             .replace("port              = 9000", f"port = {ports.server}")
             .replace('"data/tournament.db"', f'"{db_path}"')
             .replace('"data/teams.csv"', f'"{csv_path}"')
-            .replace("enabled         = false", f"enabled         = {str(ports.dashboard_enabled).lower()}")
+            .replace("[dashboard]\nenabled         = false",
+                     f"[dashboard]\nenabled         = {str(ports.dashboard_enabled).lower()}")
             .replace("allow_edit      = false", f"allow_edit      = {str(ports.allow_edit).lower()}")
-            .replace("port            = 8080", f"port            = {ports.dashboard}"))
+            .replace("port            = 8080", f"port            = {ports.dashboard}")
+            .replace("[public]\nenabled         = false",
+                     f"[public]\nenabled         = {str(ports.public_enabled).lower()}")
+            .replace("port            = 8081", f"port            = {ports.public or 8081}"))
     config = os.path.join(folder, "config.toml")
     Path(config).write_text(text, encoding="utf-8")
     env = os.path.join(folder, "test.env")

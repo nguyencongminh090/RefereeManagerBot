@@ -27,6 +27,15 @@ audit_entries   = 20           # rows in "latest changes"
 allow_edit      = false        # true adds buttons to void a game, correct a pair score, record sudden death
 # when enabled, put DASHBOARD_TOKEN in .env: the page asks for it as ?token=...
 
+# read-only page for the audience: no token, no edit tools, no bot details
+[public]
+enabled         = false
+host            = "127.0.0.1"     # keep loopback and publish through a tunnel or reverse proxy, or 0.0.0.0 on a network
+port            = 8081            # not the dashboard's port
+refresh_seconds = 10              # page polling interval; one snapshot is shared by all viewers for this long
+recent_games    = 20              # rows in "recent results"
+# shows standings, recent results with real PlayOK nicknames and the tables being played; nothing else
+
 [database]
 path       = "data/tournament.db"
 # optional: roster CSV loaded at start-up (re-loading is safe)

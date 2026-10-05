@@ -64,7 +64,7 @@ class DashboardState:
     def _standings(self) -> List[Dict[str, Any]]:
         rows = self._store.standings(self._tournament_id, self._options.scoring,
                                      self._options.ranking)
-        return [_standing_row(row) for row in rows]
+        return [standing_row(row) for row in rows]
 
     def _recent_games(self) -> List[Dict[str, Any]]:
         games = self._store.list_games(self._tournament_id, include_voided=True)
@@ -90,7 +90,7 @@ class DashboardState:
         return [{key: entry[key] for key in _AUDIT_FIELDS} for entry in entries]
 
 
-def _standing_row(row: StandingRow) -> Dict[str, Any]:
+def standing_row(row: StandingRow) -> Dict[str, Any]:
     return {"rank": row.rank, "tied": row.tied, "name": row.name, "country": row.country,
             "games": row.games, "wins": row.wins, "draws": row.draws, "losses": row.losses,
             "points": row.points, "match_points": row.match_points}
@@ -99,10 +99,10 @@ def _standing_row(row: StandingRow) -> Dict[str, Any]:
 def _game_row(game: Dict[str, Any]) -> Dict[str, Any]:
     return {"id": game["id"], "at": game["played_at"], "table_no": game["table_no"],
             "bot": game["bot_name"], "p1": game["p1"], "p2": game["p2"],
-            "result": _result_text(game["p1_result"]), "voided": bool(game["voided"])}
+            "result": result_text(game["p1_result"]), "voided": bool(game["voided"])}
 
 
-def _result_text(p1_result: int) -> str:
+def result_text(p1_result: int) -> str:
     if p1_result == GameResult.DRAW.value:
         return _DRAW_TEXT
     return _P1_WINS_TEXT if p1_result == GameResult.WIN.value else _P2_WINS_TEXT

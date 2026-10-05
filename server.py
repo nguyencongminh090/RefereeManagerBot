@@ -27,6 +27,8 @@ from storage               import Database, RepositoryOptions, SqliteTeamReposit
 from storage.models        import RankingRules, TournamentSpec
 from webui.actions         import ActionOptions, DashboardActions
 from webui.http_server     import DashboardServer
+from webui.public_server   import PublicServer
+from webui.public_state    import CachedSnapshot, PublicOptions, PublicState
 from webui.state           import DashboardOptions, DashboardState
 from storage.errors        import (DuplicateGameError, MicroMatchFullError, NotFoundError,
                                    PlayerInactiveError, SameEntrantError, StorageError,
@@ -118,6 +120,7 @@ class Server(IScoreObserver):
         self._backups  = BackupSchedule(DatabaseBackup(self._db).run, cfg.backup_seconds, clock)
         self._router   = PacketRouter(self._handlers())
         self._dashboard = self._open_dashboard(tournament_id)
+        self._public    = self._open_public(tournament_id)
         self._running  = threading.Event()
         self._stopped  = False
 
@@ -139,6 +142,29 @@ class Server(IScoreObserver):
     def dashboard_port(self) -> Optional[int]:
         """The TCP port of the organizer web page, or None when the dashboard is disabled."""
         return self._dashboard.port if self._dashboard else None
+
+    @property
+    def public_port(self) -> Optional[int]:
+        """The TCP port of the audience page, or None when it is disabled."""
+        return self._public.port if self._public else None
+
+    def _open_public(self, tournament_id: int) -> Optional[PublicServer]:
+        """Builds the audience page; a busy port closes what is already open and aborts."""
+        config = self.settings.public
+        if not config.enabled:
+            return None
+        options = PublicOptions(self.settings.tournament.scoring.games, ranking_rules(self.settings),
+                                config.recent_games)
+        state = PublicState(self._store, tournament_id,
+                            BotStatusProvider(self._sessions, self._claims), options)
+        try:
+            return PublicServer(config, CachedSnapshot(state, config.refresh_seconds / 2))
+        except OSError as exc:
+            if self._dashboard:
+                self._dashboard.stop()
+            self._db.close()
+            raise _port_problem(self.settings.source, "public",
+                                (config.host, config.port), exc) from exc
 
     def _open_dashboard(self, tournament_id: int) -> Optional[DashboardServer]:
         """Builds the dashboard; a busy port becomes a StartupError and closes the database."""
@@ -223,8 +249,9 @@ class Server(IScoreObserver):
             self.stop()
             cfg = self.settings.server
             raise _port_problem(self.settings.source, "server", (cfg.host, cfg.port), exc) from exc
-        if self._dashboard:
-            self._dashboard.start()
+        for page in (self._dashboard, self._public):
+            if page:
+                page.start()
         self._running.set()
         threading.Thread(target=self._housekeeping, daemon=True, name="housekeeping").start()
         logger.info("server listening on %s:%s", self.settings.server.host, self.port)
@@ -247,8 +274,9 @@ class Server(IScoreObserver):
         self._stopped = True
         self._running.clear()
         self._socket.stop()
-        if self._dashboard:
-            self._dashboard.stop()
+        for page in (self._dashboard, self._public):
+            if page:
+                page.stop()
         self._backup_now()
         self._db.close()
         logger.info("server stopped")
